@@ -4,17 +4,26 @@ use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource};
 use livekit::Room;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
-use crate::audio::denoiser::Denoiser;
 use crate::audio::mixer::{AudioSource, MixerHandle, SharedProcessor, MIXER_SAMPLE_RATE};
 
-pub const LIVEKIT_SAMPLE_RATE: u32 = 16000;
+pub const LIVEKIT_SAMPLE_RATE: u32 = MIXER_SAMPLE_RATE;
+const AUDIO_MAX_BITRATE: u64 = 48_000;
 pub const AUDIO_NUM_CHANNELS: u32 = 1;
 const AUDIO_TRACK_NAME: &str = "microphone";
-const AUDIO_QUEUE_SIZE: u32 = 100;
+// 0 = LiveKit's direct path: each 10 ms frame goes straight to WebRTC instead of
+// through a queue that, once full, stays full and adds its whole length as delay.
+const AUDIO_QUEUE_SIZE: u32 = 0;
+const PLAYBACK_STATS_INTERVAL: Duration = Duration::from_secs(10);
+const SENT_LEVEL_INTERVAL: Duration = Duration::from_secs(10);
+/// Outgoing frames louder than this count as speech in the level log.
+const SPEECH_THRESHOLD_DBFS: f64 = -50.0;
 
 pub struct AudioPublisher {
     audio_track: LocalAudioTrack,
@@ -28,7 +37,7 @@ impl AudioPublisher {
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         processor: SharedProcessor,
         audio_handle: &TokioHandle,
-        denoiser: Option<Denoiser>,
+        noise_suppression: Arc<AtomicBool>,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
             echo_cancellation: false,
@@ -54,7 +63,7 @@ impl AudioPublisher {
                 TrackPublishOptions {
                     source: TrackSource::Microphone,
                     audio_encoding: Some(AudioEncoding {
-                        max_bitrate: 24_000,
+                        max_bitrate: AUDIO_MAX_BITRATE,
                     }),
                     dtx: false,
                     ..Default::default()
@@ -69,7 +78,7 @@ impl AudioPublisher {
             native_source,
             sample_rate,
             processor,
-            denoiser,
+            noise_suppression,
         ));
 
         log::info!("AudioPublisher: audio track published ({}Hz)", sample_rate,);
@@ -104,7 +113,7 @@ async fn process_audio_samples(
     audio_source: NativeAudioSource,
     sample_rate: u32,
     processor: SharedProcessor,
-    mut denoiser: Option<Denoiser>,
+    noise_suppression: Arc<AtomicBool>,
 ) {
     assert_eq!(
         sample_rate, MIXER_SAMPLE_RATE,
@@ -121,8 +130,20 @@ async fn process_audio_samples(
         max_buffer_frames * 10,
     );
 
+    // Capture starts before the room connects. Sending that backlog would delay
+    // everything said for the rest of the call, since it never drains.
+    let mut discarded_samples = 0;
+    while let Ok(stale) = rx.try_recv() {
+        discarded_samples += stale.len();
+    }
+    log::info!(
+        "Audio processing: discarded {}ms captured before the call connected",
+        discarded_samples * 1000 / sample_rate as usize
+    );
+
     let mut buffer: Vec<i16> = Vec::new();
     let mut chunk = vec![0i16; samples_per_unit];
+    let mut sent_level = SentLevel::new();
 
     while let Some(audio_data) = rx.recv().await {
         // Drain all pending messages into buffer
@@ -148,18 +169,65 @@ async fn process_audio_samples(
         while buffer.len() >= samples_per_unit {
             chunk.copy_from_slice(&buffer[..samples_per_unit]);
             buffer.drain(..samples_per_unit);
-            {
-                let mut p = processor.lock();
-                let _ = p.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32);
-            }
-            if let Some(ref mut denoiser) = denoiser {
-                denoiser.process(&mut chunk);
-            }
+            processor
+                .lock()
+                .process_capture(&mut chunk, noise_suppression.load(Ordering::Relaxed));
+            sent_level.record(&chunk);
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }
     }
 
     log::info!("Audio processing stopped");
+}
+
+/// Tracks how loud the outgoing mic audio is after processing, to compare
+/// against other apps (and check that gain control does its job).
+struct SentLevel {
+    frames: u32,
+    speech_frames: u32,
+    speech_dbfs_sum: f64,
+    peak_dbfs: f64,
+    last_log: Instant,
+}
+
+impl SentLevel {
+    fn new() -> Self {
+        Self {
+            frames: 0,
+            speech_frames: 0,
+            speech_dbfs_sum: 0.0,
+            peak_dbfs: f64::NEG_INFINITY,
+            last_log: Instant::now(),
+        }
+    }
+
+    fn record(&mut self, frame: &[i16]) {
+        let mean_square =
+            frame.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / frame.len().max(1) as f64;
+        let dbfs = 10.0 * (mean_square / (i16::MAX as f64).powi(2)).max(1e-12).log10();
+        self.frames += 1;
+        if dbfs > SPEECH_THRESHOLD_DBFS {
+            self.speech_frames += 1;
+            self.speech_dbfs_sum += dbfs;
+            self.peak_dbfs = self.peak_dbfs.max(dbfs);
+        }
+        if self.last_log.elapsed() >= SENT_LEVEL_INTERVAL {
+            if self.speech_frames > 0 {
+                log::info!(
+                    "Mic sent: speech {:.1} dBFS avg, {:.1} dBFS peak, active {}%",
+                    self.speech_dbfs_sum / self.speech_frames as f64,
+                    self.peak_dbfs,
+                    self.speech_frames * 100 / self.frames,
+                );
+            } else {
+                log::info!(
+                    "Mic sent: no speech in the last {}s",
+                    SENT_LEVEL_INTERVAL.as_secs()
+                );
+            }
+            *self = Self::new();
+        }
+    }
 }
 
 /// Handle for a remote audio track subscription.
@@ -201,6 +269,7 @@ pub fn play_remote_audio_track(
         let mut total_samples: u64 = 0;
         let start = std::time::Instant::now();
         let mut last_log = start;
+        let mut last_stats_log = start;
 
         while let Some(frame) = stream.next().await {
             source_clone.push_samples(&frame.data);
@@ -208,6 +277,19 @@ pub fn play_remote_audio_track(
             total_samples += frame.data.len() as u64;
 
             let now = std::time::Instant::now();
+            if now.duration_since(last_stats_log) >= PLAYBACK_STATS_INTERVAL {
+                let stats = source_clone.take_stats();
+                log::info!(
+                    "Playback buffer [{}]: avg {:.1} frames (~{:.0}ms), skipped quiet {}, dropped {}, underruns {}",
+                    stream_key,
+                    stats.avg_depth_frames,
+                    stats.avg_depth_frames * 10.0,
+                    stats.skipped_quiet,
+                    stats.dropped,
+                    stats.underruns,
+                );
+                last_stats_log = now;
+            }
             if now.duration_since(last_log).as_secs() >= 5 {
                 let elapsed = now.duration_since(start).as_secs_f64();
                 let expected_secs = total_samples as f64 / LIVEKIT_SAMPLE_RATE as f64;

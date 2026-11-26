@@ -8,7 +8,9 @@ use std::sync::Arc;
 use thread_priority::{set_current_thread_priority, ThreadPriority};
 use tokio::sync::mpsc;
 
-const TARGET_SAMPLE_RATE: u32 = 16000;
+use super::mixer::MIXER_SAMPLE_RATE;
+
+const TARGET_SAMPLE_RATE: u32 = MIXER_SAMPLE_RATE;
 const TARGET_CHANNELS: u16 = 1;
 pub const SAMPLES_DIVIDER: u32 = 100;
 
@@ -39,16 +41,34 @@ fn assign_ui_names(raw: &[String]) -> Vec<String> {
     out
 }
 
+/// Name of the OS default input device, as cpal reports it.
+fn system_default_input_name() -> Option<String> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    #[allow(deprecated)]
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+}
+
+/// Index of the OS default input among `raw` device names, or the first device
+/// if it isn't listed.
+fn default_input_index(raw: &[String]) -> usize {
+    system_default_input_name()
+        .and_then(|name| raw.iter().position(|raw_name| *raw_name == name))
+        .unwrap_or(0)
+}
+
 pub fn list_audio_inputs() -> Vec<socket_lib::AudioDevice> {
     match microphone::available_inputs() {
         Ok(mics) => {
             let raw: Vec<String> = mics.iter().map(|m| m.to_string()).collect();
+            let default_index = default_input_index(&raw);
             let ui = assign_ui_names(&raw);
             ui.into_iter()
                 .enumerate()
                 .map(|(i, name)| socket_lib::AudioDevice {
                     name,
-                    default: i == 0,
+                    default: i == default_index,
                 })
                 .collect()
         }
@@ -114,6 +134,9 @@ pub struct Capturer {
     stop_flag: Arc<AtomicBool>,
     sample_tx: Option<mpsc::UnboundedSender<Vec<i16>>>,
     active_device_name: Option<String>,
+    /// Capture was started without a device name, so it moves along when the
+    /// OS default input changes.
+    follows_system_default: bool,
     _device_monitor: super::device_monitor::DeviceMonitor,
     socket: socket_lib::SocketSender,
     proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>,
@@ -130,6 +153,7 @@ impl Capturer {
             stop_flag: Arc::new(AtomicBool::new(false)),
             sample_tx: None,
             active_device_name: None,
+            follows_system_default: false,
             _device_monitor: super::device_monitor::DeviceMonitor::new(
                 super::device_monitor::DeviceKind::Input,
                 proxy_for_monitor,
@@ -143,6 +167,7 @@ impl Capturer {
     pub fn list_sources(&mut self) -> Vec<socket_lib::AudioDevice> {
         let mics = microphone::available_inputs().unwrap_or_default();
         let raw_names: Vec<String> = mics.iter().map(|m| m.to_string()).collect();
+        let default_index = default_input_index(&raw_names);
         let ui_names = assign_ui_names(&raw_names);
         self.available_devices = mics
             .into_iter()
@@ -159,7 +184,7 @@ impl Capturer {
             .enumerate()
             .map(|(i, dev)| socket_lib::AudioDevice {
                 name: dev.ui_name.clone(),
-                default: i == 0,
+                default: i == default_index,
             })
             .collect()
     }
@@ -211,7 +236,7 @@ impl Capturer {
             }
         };
 
-        // Try to configure for 16kHz mono, fall back to default if not supported
+        // Try to configure for TARGET_SAMPLE_RATE mono, fall back to default if not supported
         let target_sample_rate = NonZero::new(TARGET_SAMPLE_RATE).unwrap();
         let target_channels = NonZero::new(TARGET_CHANNELS).unwrap();
 
@@ -221,13 +246,13 @@ impl Capturer {
             .and_then(|b| b.try_channels(target_channels))
         {
             Ok(configured) => {
-                log::info!("Hardware supports 16kHz mono, using native config");
+                log::info!("Hardware supports {TARGET_SAMPLE_RATE}Hz mono, using native config");
                 configured
                     .open_stream()
                     .map_err(|e| format!("Failed to open stream: {}", e))?
             }
             Err(_) => {
-                log::info!("Hardware doesn't support 16kHz mono, will resample");
+                log::info!("Hardware doesn't support {TARGET_SAMPLE_RATE}Hz mono, will resample");
                 builder
                     .default_config()
                     .map_err(|e| format!("Failed to get default config: {}", e))?
@@ -255,13 +280,9 @@ impl Capturer {
         self.stop_flag.store(false, Ordering::Relaxed);
         let stop_flag = Arc::clone(&self.stop_flag);
 
+        self.follows_system_default = device_name.is_none();
         self.active_device_name = if device_name.is_none() || fell_back_to_default {
-            use cpal::traits::{DeviceTrait, HostTrait};
-            #[allow(deprecated)]
-            let cpal_raw = cpal::default_host()
-                .default_input_device()
-                .and_then(|d| d.name().ok());
-            cpal_raw.map(|raw| {
+            system_default_input_name().map(|raw| {
                 self.available_devices
                     .iter()
                     .find(|d| d.name == raw)
@@ -365,6 +386,21 @@ impl Capturer {
         if !self.is_capturing() {
             return;
         }
+        if self.follows_system_default {
+            let new_default = self
+                .list_sources()
+                .into_iter()
+                .find(|device| device.default)
+                .map(|device| device.name);
+            if new_default.is_some() && new_default == self.active_device_name {
+                return;
+            }
+            log::info!("Following the system default mic to {new_default:?}");
+            if let Err(e) = self.switch_device(None) {
+                log::error!("Failed to follow the system default mic: {e}");
+            }
+            return;
+        }
         match &self.active_device_name {
             None => {
                 log::info!("Was using default mic, reconnecting to new default...");
@@ -401,5 +437,6 @@ impl Capturer {
     pub fn stop_capture(&mut self) {
         self.stop_thread();
         self.active_device_name = None;
+        self.follows_system_default = false;
     }
 }

@@ -1,18 +1,20 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::StreamConfig;
 use livekit::webrtc::audio_frame::AudioFrame;
-use livekit::webrtc::native::apm::AudioProcessingModule;
 use livekit::webrtc::native::audio_mixer::{self, AudioMixer};
 use livekit::webrtc::native::audio_resampler::AudioResampler;
 use log::{error, info};
 use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
-pub type SharedProcessor = Arc<Mutex<AudioProcessingModule>>;
+use super::processing::CaptureProcessing;
 
-pub const MIXER_SAMPLE_RATE: u32 = 16000;
+pub type SharedProcessor = Arc<Mutex<CaptureProcessing>>;
+
+pub const MIXER_SAMPLE_RATE: u32 = 48000;
 pub const MIXER_NUM_CHANNELS: u32 = 1;
 
 /// Hard cap on per-source buffered frames (10ms each).
@@ -21,7 +23,78 @@ pub const MIXER_NUM_CHANNELS: u32 = 1;
 /// to us when it's CPU-starved. We absorb bursts with headroom; if we blow
 /// past this cap we crash back by dropping from the front.
 const HARD_CAP_FRAMES: usize = 80; // 800ms
-const TARGET_DELAY: usize = 20;
+/// Playback cushion per remote participant, in 10 ms frames. WebRTC's jitter
+/// buffer absorbs network jitter; this covers stalls in local delivery, after
+/// which the late frames arrive in a burst.
+const TARGET_DELAY: usize = 6; // 60 ms
+/// Above this the buffer drops speech too, to bound latency after a long stall.
+const MAX_DELAY: usize = 15; // 150 ms
+/// Frames quieter than this RMS (about -45 dBFS) can be skipped unheard.
+const QUIET_RMS: f64 = 184.0;
+
+/// Playback buffer counters for one remote participant. Updated from the
+/// real-time output callback, so lock-free; read and reset by the receive task.
+#[derive(Default)]
+struct PlaybackStats {
+    mixes: AtomicU32,
+    depth_sum: AtomicU32,
+    skipped_quiet: AtomicU32,
+    dropped: AtomicU32,
+    underruns: AtomicU32,
+    playing: AtomicBool,
+}
+
+pub struct PlaybackSnapshot {
+    /// Average frames buffered when the output callback asked for audio.
+    pub avg_depth_frames: f64,
+    /// Quiet frames skipped to shrink the buffer back to `TARGET_DELAY`.
+    pub skipped_quiet: u32,
+    /// Audible frames dropped because the buffer exceeded `MAX_DELAY`.
+    pub dropped: u32,
+    /// Times the buffer ran dry while audio was flowing (not while muted).
+    pub underruns: u32,
+}
+
+fn rms(frame: &[i16]) -> f64 {
+    if frame.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = frame.iter().map(|&s| (s as f64).powi(2)).sum();
+    (sum / frame.len() as f64).sqrt()
+}
+
+/// Takes the next frame to play. Above `TARGET_DELAY` the buffer shrinks only
+/// by skipping quiet frames, so a burst after a stall becomes cushion and drains
+/// during the next pause instead of cutting speech; above `MAX_DELAY` it drops
+/// speech too.
+fn next_frame(buffer: &mut VecDeque<Vec<i16>>, stats: &PlaybackStats) -> Option<Vec<i16>> {
+    stats.mixes.fetch_add(1, Ordering::Relaxed);
+    stats
+        .depth_sum
+        .fetch_add(buffer.len() as u32, Ordering::Relaxed);
+    if buffer.len() > TARGET_DELAY {
+        let front_is_quiet = buffer.front().is_some_and(|frame| rms(frame) < QUIET_RMS);
+        if front_is_quiet {
+            buffer.pop_front();
+            stats.skipped_quiet.fetch_add(1, Ordering::Relaxed);
+        } else if buffer.len() > MAX_DELAY {
+            buffer.pop_front();
+            stats.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    match buffer.pop_front() {
+        Some(frame) => {
+            stats.playing.store(true, Ordering::Relaxed);
+            Some(frame)
+        }
+        None => {
+            if stats.playing.swap(false, Ordering::Relaxed) {
+                stats.underruns.fetch_add(1, Ordering::Relaxed);
+            }
+            None
+        }
+    }
+}
 
 struct MixerInner {
     _stream: cpal::Stream,
@@ -48,9 +121,26 @@ pub struct AudioSource {
     num_channels: u32,
     last_mix: Arc<Mutex<Option<std::time::Instant>>>,
     buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
+    stats: Arc<PlaybackStats>,
 }
 
 impl AudioSource {
+    /// Returns the playback buffer counters since the previous call and resets them.
+    pub fn take_stats(&self) -> PlaybackSnapshot {
+        let mixes = self.stats.mixes.swap(0, Ordering::Relaxed);
+        let depth_sum = self.stats.depth_sum.swap(0, Ordering::Relaxed);
+        PlaybackSnapshot {
+            avg_depth_frames: if mixes == 0 {
+                0.0
+            } else {
+                depth_sum as f64 / mixes as f64
+            },
+            skipped_quiet: self.stats.skipped_quiet.swap(0, Ordering::Relaxed),
+            dropped: self.stats.dropped.swap(0, Ordering::Relaxed),
+            underruns: self.stats.underruns.swap(0, Ordering::Relaxed),
+        }
+    }
+
     pub fn push_samples(&self, samples: &[i16]) {
         let mut buffer = self.buffer.lock();
         buffer.push_back(samples.to_vec());
@@ -87,13 +177,7 @@ impl audio_mixer::AudioMixerSource for AudioSource {
         *last = Some(now);
         drop(last);
 
-        let buf = {
-            let mut buffer = self.buffer.lock();
-            if buffer.len() > TARGET_DELAY {
-                let _ = buffer.pop_front();
-            }
-            buffer.pop_front()?
-        };
+        let buf = next_frame(&mut self.buffer.lock(), &self.stats)?;
 
         Some(AudioFrame {
             data: Cow::Owned(buf),
@@ -133,7 +217,6 @@ fn open_output_stream(
     // https://github.com/zed-industries/zed/blob/main/crates/audio/src/audio.rs
     let mut resampler = AudioResampler::default();
     let mut buf: Vec<f32> = Vec::new();
-    let mut reverse_buf: Vec<i16> = Vec::new();
 
     let stream = device
         .build_output_stream(
@@ -157,16 +240,7 @@ fn open_output_stream(
                     let mixed = mixer_guard.mix(MIXER_NUM_CHANNELS as usize);
                     // Feed mono mix to APM reverse stream before resampling to
                     // multi-channel output.
-                    {
-                        let mut proc = apm.lock();
-                        reverse_buf.clear();
-                        reverse_buf.extend_from_slice(mixed);
-                        let _ = proc.process_reverse_stream(
-                            &mut reverse_buf,
-                            MIXER_SAMPLE_RATE as i32,
-                            MIXER_NUM_CHANNELS as i32,
-                        );
-                    }
+                    apm.lock().process_reverse(mixed);
                     // WebRTC only upmixes mono to stereo. Keep that path for
                     // mono/stereo devices and handle wider outputs ourselves.
                     let resampler_channels = if output_channels > 2 {
@@ -221,10 +295,7 @@ fn open_output_stream(
 
 impl MixerHandle {
     pub fn new() -> Result<(Self, SharedProcessor), String> {
-        let apm = Arc::new(Mutex::new(AudioProcessingModule::new(
-            true, true, false, false,
-        )));
-        let _ = apm.lock().set_stream_delay_ms(50);
+        let apm = Arc::new(Mutex::new(CaptureProcessing::new()));
         let mixer = Arc::new(Mutex::new(AudioMixer::new()));
         let stream = open_output_stream(mixer.clone(), apm.clone())?;
         let handle = Self {
@@ -248,6 +319,7 @@ impl MixerHandle {
             num_channels: channels as u32,
             last_mix: Arc::new(Mutex::new(None)),
             buffer: Arc::new(Mutex::new(VecDeque::new())),
+            stats: Arc::new(PlaybackStats::default()),
         };
         inner.mixer.lock().add_source(source.clone());
         source
@@ -259,5 +331,71 @@ impl MixerHandle {
         inner._stream = stream;
         info!("Audio output reconnected");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FRAME_LEN: usize = (MIXER_SAMPLE_RATE / 100) as usize;
+
+    fn speech() -> Vec<i16> {
+        vec![3000; FRAME_LEN]
+    }
+
+    fn quiet() -> Vec<i16> {
+        vec![10; FRAME_LEN]
+    }
+
+    #[test]
+    fn keeps_speech_above_target_until_max_delay() {
+        let stats = PlaybackStats::default();
+        let mut buffer: VecDeque<_> = (0..MAX_DELAY).map(|_| speech()).collect();
+        assert!(next_frame(&mut buffer, &stats).is_some());
+        assert_eq!(buffer.len(), MAX_DELAY - 1);
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn drops_speech_beyond_max_delay() {
+        let stats = PlaybackStats::default();
+        let mut buffer: VecDeque<_> = (0..=MAX_DELAY).map(|_| speech()).collect();
+        assert!(next_frame(&mut buffer, &stats).is_some());
+        assert_eq!(buffer.len(), MAX_DELAY - 1);
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn skips_quiet_frames_above_target() {
+        let stats = PlaybackStats::default();
+        let mut buffer: VecDeque<_> = std::iter::once(quiet())
+            .chain((0..TARGET_DELAY).map(|_| speech()))
+            .collect();
+        assert_eq!(next_frame(&mut buffer, &stats), Some(speech()));
+        assert_eq!(stats.skipped_quiet.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn plays_quiet_frames_at_or_below_target() {
+        let stats = PlaybackStats::default();
+        let mut buffer: VecDeque<_> = (0..TARGET_DELAY).map(|_| quiet()).collect();
+        assert_eq!(next_frame(&mut buffer, &stats), Some(quiet()));
+        assert_eq!(stats.skipped_quiet.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn counts_underrun_only_after_audio_flowed() {
+        let stats = PlaybackStats::default();
+        let mut buffer = VecDeque::new();
+        assert!(next_frame(&mut buffer, &stats).is_none());
+        assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
+
+        buffer.push_back(speech());
+        assert!(next_frame(&mut buffer, &stats).is_some());
+        assert!(next_frame(&mut buffer, &stats).is_none());
+        assert!(next_frame(&mut buffer, &stats).is_none());
+        assert_eq!(stats.underruns.load(Ordering::Relaxed), 1);
     }
 }

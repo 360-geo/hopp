@@ -1,9 +1,9 @@
 pub mod audio {
     pub mod capturer;
-    pub mod denoiser;
     pub mod device_monitor;
     pub mod mixer;
     pub mod player;
+    pub mod processing;
 }
 
 pub mod livekit {
