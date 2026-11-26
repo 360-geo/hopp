@@ -509,8 +509,12 @@ fn call_started(
             data.activation_policy_regular = true;
         }
     }
-    // Resolve preferred → last used → system default → first → "".
-    let audio_device_name = {
+    // An empty name makes the core capture from the system default input and
+    // follow it when it changes. Otherwise resolve preferred → last used →
+    // system default → first → "".
+    let audio_device_name = if user_settings.follows_system_default_mic() {
+        String::new()
+    } else {
         let last_used = data.app_state.last_used_mic();
         let devices: Vec<AudioDevice> = if let Err(e) = data.sender.send(Message::ListAudioDevices)
         {
@@ -991,10 +995,14 @@ fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
 }
 
 #[tauri::command(async)]
-fn set_default_mic(app: tauri::AppHandle, device_name: Option<String>) -> Result<(), String> {
+fn set_default_mic(
+    app: tauri::AppHandle,
+    device_name: Option<String>,
+    use_last_used: bool,
+) -> Result<(), String> {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.app_state.set_default_mic(device_name)
+    data.app_state.set_default_mic(device_name, use_last_used)
 }
 
 #[tauri::command(async)]
@@ -1002,9 +1010,14 @@ fn get_preferred_microphone(app: tauri::AppHandle) -> String {
     let devices = list_microphones(app.clone());
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
+    let settings = data.app_state.user_settings();
+    if settings.follows_system_default_mic() {
+        // The device flagged `default` is the system default input.
+        return resolve_microphone(&devices, None, None);
+    }
     resolve_microphone(
         &devices,
-        data.app_state.user_settings().default_mic.as_deref(),
+        settings.default_mic.as_deref(),
         data.app_state.last_used_mic().as_deref(),
     )
 }

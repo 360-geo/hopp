@@ -53,6 +53,10 @@ pub struct UserSettings {
     pub start_mic_on_call: bool,
     #[serde(default)]
     pub default_mic: Option<String>,
+    /// Without a `default_mic`: true reuses the last mic picked in a call,
+    /// false follows the system default input (the default).
+    #[serde(default)]
+    pub use_last_used_mic: bool,
     #[serde(default = "default_true")]
     pub remote_control_enabled: bool,
     #[serde(default = "default_noise_cancellation_enabled")]
@@ -82,6 +86,7 @@ impl Default for UserSettings {
             start_camera_on_call: false,
             start_mic_on_call: true,
             default_mic: None,
+            use_last_used_mic: false,
             remote_control_enabled: true,
             noise_cancellation_enabled: true,
             screen_share_resolution: ScreenShareResolution::P4K,
@@ -138,6 +143,11 @@ const DEFAULT_SHORTCUT_END_CALL: &str = "Cmd+Shift+W";
 const DEFAULT_SHORTCUT_END_CALL: &str = "Alt+Q";
 
 impl UserSettings {
+    /// True when calls should start on, and keep following, the system default input.
+    pub fn follows_system_default_mic(&self) -> bool {
+        self.default_mic.is_none() && !self.use_last_used_mic
+    }
+
     pub fn resolve_shortcuts(&mut self) {
         if self.shortcut_toggle_mic.is_none() {
             self.shortcut_toggle_mic = Some(DEFAULT_SHORTCUT_MIC.to_string());
@@ -559,7 +569,13 @@ impl AppState {
         }
     }
 
-    pub fn set_default_mic(&mut self, device_name: Option<String>) -> Result<(), String> {
+    /// Sets the mic calls start with: a named device, or with `None` either the
+    /// last-used mic (`use_last_used`) or the system default.
+    pub fn set_default_mic(
+        &mut self,
+        device_name: Option<String>,
+        use_last_used: bool,
+    ) -> Result<(), String> {
         if device_name
             .as_ref()
             .is_some_and(|name| name.trim().is_empty())
@@ -571,9 +587,13 @@ impl AppState {
             .state
             .user_settings
             .get_or_insert_with(UserSettings::default);
-        let previous = std::mem::replace(&mut settings.default_mic, device_name);
+        let previous = (
+            std::mem::replace(&mut settings.default_mic, device_name),
+            std::mem::replace(&mut settings.use_last_used_mic, use_last_used),
+        );
         if !self.save() {
-            self.state.user_settings.as_mut().unwrap().default_mic = previous;
+            let settings = self.state.user_settings.as_mut().unwrap();
+            (settings.default_mic, settings.use_last_used_mic) = previous;
             return Err("Failed to save default microphone".to_string());
         }
         Ok(())
@@ -681,14 +701,19 @@ mod microphone_tests {
     #[test]
     fn default_microphone_migration_and_persistence() {
         let mut legacy = serde_json::to_value(UserSettings::default()).unwrap();
-        legacy.as_object_mut().unwrap().remove("default_mic");
+        let legacy_object = legacy.as_object_mut().unwrap();
+        legacy_object.remove("default_mic");
+        legacy_object.remove("use_last_used_mic");
         let migrated: UserSettings = serde_json::from_value(legacy).unwrap();
         assert_eq!(migrated.default_mic, None);
+        assert!(migrated.follows_system_default_mic());
 
         let directory = std::env::temp_dir().join(format!("hopp-mic-test-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let mut state = AppState::new(&directory);
-        state.set_default_mic(Some("Preferred".into())).unwrap();
+        state
+            .set_default_mic(Some("Preferred".into()), false)
+            .unwrap();
         state.set_last_used_mic("Temporary".into());
         drop(state);
         let mut state = AppState::new(&directory);
@@ -696,15 +721,23 @@ mod microphone_tests {
             state.user_settings().default_mic.as_deref(),
             Some("Preferred")
         );
+        assert!(!state.user_settings().follows_system_default_mic());
         assert_eq!(state.last_used_mic().as_deref(), Some("Temporary"));
-        assert!(state.set_default_mic(Some(" ".into())).is_err());
+        assert!(state.set_default_mic(Some(" ".into()), false).is_err());
         assert_eq!(
             state.user_settings().default_mic.as_deref(),
             Some("Preferred")
         );
-        state.set_default_mic(None).unwrap();
+        state.set_default_mic(None, true).unwrap();
         drop(state);
-        assert_eq!(AppState::new(&directory).user_settings().default_mic, None);
+        let mut state = AppState::new(&directory);
+        assert_eq!(state.user_settings().default_mic, None);
+        assert!(state.user_settings().use_last_used_mic);
+        state.set_default_mic(None, false).unwrap();
+        drop(state);
+        assert!(AppState::new(&directory)
+            .user_settings()
+            .follows_system_default_mic());
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -715,8 +748,12 @@ mod microphone_tests {
             root_folder: PathBuf::from("/dev/null"),
             lock: Mutex::new(()),
         };
-        assert!(state.set_default_mic(Some("Preferred".into())).is_err());
+        assert!(state
+            .set_default_mic(Some("Preferred".into()), false)
+            .is_err());
         assert_eq!(state.user_settings().default_mic, None);
+        assert!(state.set_default_mic(None, true).is_err());
+        assert!(!state.user_settings().use_last_used_mic);
     }
 }
 

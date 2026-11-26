@@ -104,6 +104,8 @@ export interface UserSettings {
   start_camera_on_call: boolean;
   start_mic_on_call: boolean;
   default_mic: string | null;
+  /** Without a `default_mic`: true reuses the last mic picked in a call, false follows the system default. */
+  use_last_used_mic: boolean;
   remote_control_enabled: boolean;
   noise_cancellation_enabled: boolean;
   screen_share_resolution: ScreenShareResolution;
@@ -205,7 +207,7 @@ export interface CommandMap {
 
   // User settings (Settings window)
   get_user_settings: { args: void; return: UserSettings };
-  set_default_mic: { args: { deviceName: string | null }; return: void };
+  set_default_mic: { args: { deviceName: string | null; useLastUsed: boolean }; return: void };
   get_preferred_microphone: { args: void; return: string };
   list_installed_applications: { args: void; return: InstalledApplication[] };
   set_app_veil_applications: { args: { applications: AppVeilApplication[] }; return: void };

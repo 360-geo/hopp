@@ -441,6 +441,7 @@ function SettingsWindow() {
     enabled: section === "call",
     select: (devices) => devices.filter((device) => device.name !== "").sort((a, b) => a.name.localeCompare(b.name)),
   });
+  const systemDefaultMic = microphones.find((device) => device.default)?.name;
 
   useEffect(() => {
     if (settings) {
@@ -551,10 +552,16 @@ function SettingsWindow() {
                       Default microphone
                     </label>
                     <p id="default-microphone-description" className="text-sm text-gray-500 dark:text-gray-400">
-                      Used at the start of each call when available. Changes apply to your next call.
+                      Used at the start of each call. System default follows your computer&apos;s input setting, also
+                      mid-call. Changes apply to your next call.
                     </p>
                     <Select
-                      value={settings.default_mic == null ? "last-used" : `mic:${settings.default_mic}`}
+                      value={
+                        settings.default_mic != null ? `mic:${settings.default_mic}`
+                        : settings.use_last_used_mic ?
+                          "last-used"
+                        : "system-default"
+                      }
                       disabled={savingDefaultMic}
                       onOpenChange={(open) => {
                         if (open) refetchMicrophones();
@@ -564,7 +571,8 @@ function SettingsWindow() {
                         setDefaultMicError("");
                         try {
                           await typedInvoke("set_default_mic", {
-                            deviceName: value === "last-used" ? null : value.slice(4),
+                            deviceName: value.startsWith("mic:") ? value.slice(4) : null,
+                            useLastUsed: value === "last-used",
                           });
                           await refetchSettings();
                         } catch (error) {
@@ -578,6 +586,9 @@ function SettingsWindow() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="system-default">
+                          {systemDefaultMic ? `System default (${systemDefaultMic})` : "System default"}
+                        </SelectItem>
                         <SelectItem value="last-used">Use last-used microphone</SelectItem>
                         {settings.default_mic &&
                           !microphones.some((device) => device.name === settings.default_mic) && (
