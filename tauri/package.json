@@ -83,7 +83,7 @@
     "@types/react-dom": "^18.2.7",
     "@vitejs/plugin-react": "^4.2.1",
     "lodash": "^4.17.21",
-    "postcss": "^8.4.41",
+    "postcss": "^8.5.23",
     "tailwindcss": "^4.1.13",
     "typescript": "5.2.2",
     "vite": "^5.3.1"
