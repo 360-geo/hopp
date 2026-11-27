@@ -28,6 +28,8 @@ const SPEECH_THRESHOLD_DBFS: f64 = -50.0;
 pub struct AudioPublisher {
     audio_track: LocalAudioTrack,
     processing_task: tokio::task::JoinHandle<()>,
+    /// Muted microphone audio isn't transcribed either.
+    muted: Arc<AtomicBool>,
 }
 
 impl AudioPublisher {
@@ -73,12 +75,14 @@ impl AudioPublisher {
             .map_err(|e| format!("Failed to publish audio track: {e}"))?;
         log::info!("audio_publish: took {}", now.elapsed().as_millis());
 
+        let muted = Arc::new(AtomicBool::new(false));
         let processing_task = audio_handle.spawn(process_audio_samples(
             sample_rx,
             native_source,
             sample_rate,
             processor,
             noise_suppression,
+            muted.clone(),
         ));
 
         log::info!("AudioPublisher: audio track published ({}Hz)", sample_rate,);
@@ -86,6 +90,7 @@ impl AudioPublisher {
         Ok(Self {
             audio_track: track,
             processing_task,
+            muted,
         })
     }
 
@@ -100,10 +105,12 @@ impl AudioPublisher {
     }
 
     pub fn mute(&self) {
+        self.muted.store(true, Ordering::Relaxed);
         self.audio_track.mute();
     }
 
     pub fn unmute(&self) {
+        self.muted.store(false, Ordering::Relaxed);
         self.audio_track.unmute();
     }
 }
@@ -114,6 +121,7 @@ async fn process_audio_samples(
     sample_rate: u32,
     processor: SharedProcessor,
     noise_suppression: Arc<AtomicBool>,
+    muted: Arc<AtomicBool>,
 ) {
     assert_eq!(
         sample_rate, MIXER_SAMPLE_RATE,
@@ -173,6 +181,9 @@ async fn process_audio_samples(
                 .lock()
                 .process_capture(&mut chunk, noise_suppression.load(Ordering::Relaxed));
             sent_level.record(&chunk);
+            if !muted.load(Ordering::Relaxed) {
+                crate::transcription::transcriber::feed_local(&chunk);
+            }
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }
     }
@@ -356,10 +367,13 @@ impl Drop for AudioTrackHandle {
 
 /// Sets up a remote audio track to feed into the rodio mixer.
 /// Returns a handle that cleans up automatically on drop.
+/// `speaker_name` is who to credit in call transcripts; `None` keeps the
+/// audio out of them (shared system audio).
 pub fn play_remote_audio_track(
     track: RemoteAudioTrack,
     mixer: MixerHandle,
     participant_id: &str,
+    speaker_name: Option<String>,
     audio_handle: &TokioHandle,
 ) -> AudioTrackHandle {
     let source = mixer.add_source(LIVEKIT_SAMPLE_RATE, AUDIO_NUM_CHANNELS as u16);
@@ -383,6 +397,9 @@ pub fn play_remote_audio_track(
 
         while let Some(frame) = stream.next().await {
             source_clone.push_samples(&frame.data);
+            if let Some(name) = &speaker_name {
+                crate::transcription::transcriber::feed_remote(name, &frame.data);
+            }
             frame_count += 1;
             total_samples += frame.data.len() as u64;
 

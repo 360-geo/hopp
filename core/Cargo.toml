@@ -55,6 +55,8 @@ objc2-core-media = { version = "0.3.1", features = ["CMSampleBuffer", "CMTime", 
 dispatch2 = "0.3.0"
 objc2 = { version = "0.6.1", features = ["exception"] }
 objc2-core-audio = { version = "0.3", features = ["AudioHardware"] }
+# Call transcription on this Mac: whisper.cpp on the GPU.
+whisper-rs = { version = "0.16.0", features = ["metal", "log_backend"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 glib = "0.21.1"
@@ -77,6 +79,7 @@ livekit = { git = "https://github.com/gethopp/rust-sdks", branch = "hopp", featu
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 dirs = "5.0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 socket_lib = { path = "socket_lib" }
 sentry_utils = { path = "sentry_utils" }
 thiserror = "2.0.12"

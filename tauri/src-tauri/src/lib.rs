@@ -6,6 +6,7 @@ pub mod permissions;
 #[cfg(target_os = "macos")]
 pub mod sleep_prevention;
 pub mod sounds;
+pub mod transcription;
 pub mod tray;
 
 use log::LevelFilter;

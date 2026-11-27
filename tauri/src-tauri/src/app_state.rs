@@ -99,6 +99,16 @@ pub struct UserSettings {
     /// headphones are in use.
     #[serde(default)]
     pub share_system_audio: bool,
+    /// Transcribe calls on this Mac with Whisper, once the model is downloaded.
+    #[serde(default)]
+    pub transcription_enabled: bool,
+    /// Whisper language code for transcripts, or "auto".
+    #[serde(default = "default_transcription_language")]
+    pub transcription_language: String,
+}
+
+fn default_transcription_language() -> String {
+    "auto".to_string()
 }
 
 impl Default for UserSettings {
@@ -128,6 +138,8 @@ impl Default for UserSettings {
             webcam_preview: true,
             open_received_links: true,
             share_system_audio: false,
+            transcription_enabled: false,
+            transcription_language: default_transcription_language(),
         }
     }
 }

@@ -146,6 +146,17 @@ pub struct AudioDevice {
     pub default: bool,
 }
 
+/// Transcribe calls on this Mac (Hopp → core).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranscriptionSettings {
+    /// The Whisper model file.
+    pub model_path: String,
+    /// Where call transcripts are saved.
+    pub transcripts_dir: String,
+    /// Whisper language code, or "auto".
+    pub language: String,
+}
+
 /// A web link a viewer sent the sharer.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReceivedLink {
@@ -242,6 +253,8 @@ pub enum Message {
     /// While sharing the screen, share the Mac's system audio too when
     /// headphones are in use. Turning it on applies from the next share.
     SetShareSystemAudio(bool),
+    /// Transcribe calls from the next call on, or stop (`None`).
+    SetTranscription(Option<TranscriptionSettings>),
     /// A viewer sent the sharer a web link (core → Hopp), which opens it in
     /// the browser or copies it, as Settings say.
     LinkReceived(ReceivedLink),

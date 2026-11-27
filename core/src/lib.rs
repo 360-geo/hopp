@@ -10,6 +10,11 @@ pub mod audio {
     pub mod system_audio;
 }
 
+pub mod transcription {
+    pub mod segmenter;
+    pub mod transcriber;
+}
+
 pub mod livekit {
     pub mod audio;
     pub mod participant;
@@ -419,6 +424,8 @@ pub struct Application<'a> {
     webcam_preview_enabled: bool,
     /// Share the system audio with viewers when using headphones (Settings > Screen Share).
     share_system_audio: bool,
+    /// Transcribe calls (Settings > Transcription); `None` when off.
+    transcription: Option<transcription::transcriber::TranscriptionConfig>,
     /// Whether screen capture sends system audio to viewers right now.
     system_audio_enabled: Arc<AtomicBool>,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
@@ -516,6 +523,7 @@ impl<'a> Application<'a> {
             noise_cancellation_enabled: Arc::new(AtomicBool::new(true)),
             webcam_preview_enabled: true,
             share_system_audio: false,
+            transcription: None,
             system_audio_enabled: Arc::new(AtomicBool::new(false)),
             camera_capturer: camera_capturer.clone(),
             screensharing_active: false,
@@ -886,6 +894,23 @@ impl<'a> Application<'a> {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = show;
+    }
+
+    /// Starts transcribing the call in progress, when transcription is on.
+    fn start_transcription(&self) {
+        let (Some(config), Some(room_service)) = (&self.transcription, &self.room_service) else {
+            return;
+        };
+        let local_name = room_service
+            .participants()
+            .read()
+            .unwrap()
+            .get("local")
+            .map(|info| info.name().to_string());
+        // No local participant yet: the call isn't connected.
+        if let Some(local_name) = local_name {
+            transcription::transcriber::start(config.clone(), local_name);
+        }
     }
 
     /// Sends the system audio to viewers only while the user shares their
@@ -1650,6 +1675,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 match result {
                     Ok(snapshot) => {
                         let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                        self.start_transcription();
                         if self.start_camera_on_call {
                             self.start_camera_on_call = false;
                             let res = self.event_loop_proxy.send_event(UserEvent::StartCamera {
@@ -1677,6 +1703,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::CallEnd => {
                 log::info!("user_event: CallEnd");
+                transcription::transcriber::stop();
                 self.stop_mic();
                 self.audio_player.stop();
                 self.stop_camera();
@@ -2649,6 +2676,19 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.audio_player.set_output_device(output_device);
                 self.update_system_audio_sharing();
             }
+            UserEvent::SetTranscription(settings) => {
+                log::info!("user_event: SetTranscription(on: {})", settings.is_some());
+                self.transcription =
+                    settings.map(|settings| transcription::transcriber::TranscriptionConfig {
+                        model_path: settings.model_path.into(),
+                        transcripts_dir: settings.transcripts_dir.into(),
+                        language: settings.language,
+                    });
+                // Turning it off stops the call's transcription; turning it on
+                // starts one when a call is going.
+                transcription::transcriber::stop();
+                self.start_transcription();
+            }
             UserEvent::SetShareSystemAudio(enabled) => {
                 log::info!("user_event: SetShareSystemAudio({enabled})");
                 self.share_system_audio = enabled;
@@ -3468,6 +3508,7 @@ pub enum UserEvent {
     SetAutoMicVolume(bool),
     SetWebcamPreview(bool),
     SetShareSystemAudio(bool),
+    SetTranscription(Option<socket_lib::TranscriptionSettings>),
     /// Share the camera after its private preview.
     CameraPreviewShare,
     /// A viewer sent the sharer a link to open.
@@ -3608,6 +3649,7 @@ impl RenderEventLoop {
                     Message::SetShareSystemAudio(enabled) => {
                         UserEvent::SetShareSystemAudio(enabled)
                     }
+                    Message::SetTranscription(settings) => UserEvent::SetTranscription(settings),
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture {
                         msg,
                         from_socket: true,

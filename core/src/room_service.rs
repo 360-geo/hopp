@@ -2926,6 +2926,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                             audio_track,
                             mixer.clone(),
                             &participant_identity,
+                            None,
                             &audio_handle,
                         );
                         *remote_screen_share.system_audio.lock().unwrap() = Some(handle);
@@ -2940,6 +2941,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                             audio_track,
                             mixer.clone(),
                             &participant_identity,
+                            Some(participant.name()),
                             &audio_handle,
                         );
 

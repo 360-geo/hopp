@@ -1084,6 +1084,72 @@ fn set_audio_output(app: tauri::AppHandle, device_name: Option<String>) {
     }
 }
 
+/// Sends the core what it needs to transcribe calls, or that it shouldn't.
+fn sync_transcription(app: &tauri::AppHandle) {
+    let Ok(app_data_dir) = app.path().app_data_dir() else {
+        log::error!("sync_transcription: no app data dir");
+        return;
+    };
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let settings =
+        hopp::transcription::core_settings(&app_data_dir, &data.app_state.user_settings());
+    if let Err(e) = data.sender.send(Message::SetTranscription(settings)) {
+        log::error!("sync_transcription: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
+fn get_transcription_info(
+    app: tauri::AppHandle,
+) -> Result<hopp::transcription::TranscriptionInfo, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(hopp::transcription::info(&app_data_dir))
+}
+
+#[tauri::command]
+async fn download_transcription_model(app: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    hopp::transcription::download_model(&app, &app_data_dir).await?;
+    sync_transcription(&app);
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn set_transcription_enabled(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_transcription_enabled: {enabled}");
+    {
+        let data = app.state::<Mutex<AppData>>();
+        let mut data = data.lock().unwrap();
+        data.app_state
+            .update_user_setting(|s| s.transcription_enabled = enabled);
+    }
+    sync_transcription(&app);
+}
+
+#[tauri::command(async)]
+fn set_transcription_language(app: tauri::AppHandle, language: String) {
+    log::info!("set_transcription_language: {language}");
+    {
+        let data = app.state::<Mutex<AppData>>();
+        let mut data = data.lock().unwrap();
+        data.app_state
+            .update_user_setting(|s| s.transcription_language = language);
+    }
+    sync_transcription(&app);
+}
+
+#[tauri::command(async)]
+fn open_transcripts_folder(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = hopp::transcription::transcripts_dir(&app_data_dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 fn set_share_system_audio(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_share_system_audio: {enabled}");
@@ -1723,6 +1789,10 @@ fn main() {
             if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
             }
+            let transcription = hopp::transcription::core_settings(&app_data_dir, &app_state.user_settings());
+            if let Err(e) = sender.send(Message::SetTranscription(transcription)) {
+                log::error!("Failed to send initial transcription settings: {e:?}");
+            }
             let share_system_audio = app_state.user_settings().share_system_audio;
             if let Err(e) = sender.send(Message::SetShareSystemAudio(share_system_audio)) {
                 log::error!("Failed to send initial share_system_audio: {e:?}");
@@ -2105,6 +2175,11 @@ fn main() {
             set_webcam_preview,
             set_open_received_links,
             set_share_system_audio,
+            get_transcription_info,
+            download_transcription_model,
+            set_transcription_enabled,
+            set_transcription_language,
+            open_transcripts_folder,
             select_microphone,
             list_webcams,
             start_camera,

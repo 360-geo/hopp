@@ -2,7 +2,8 @@ import "../../App.css";
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import clsx from "clsx";
-import { HiCog6Tooth, HiEyeSlash, HiMicrophone, HiVideoCamera } from "react-icons/hi2";
+import { HiCog6Tooth, HiDocumentText, HiEyeSlash, HiMicrophone, HiVideoCamera } from "react-icons/hi2";
+import { listen } from "@tauri-apps/api/event";
 import { LuCommand, LuScreenShare } from "react-icons/lu";
 import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,8 @@ import {
   type InstalledApplication,
   type ScreenSharePickerMode,
   type ScreenShareResolution,
+  type TranscriptionModelProgress,
+  type UserSettings,
 } from "@/core_payloads";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { tauriUtils } from "@/windows/window-utils";
@@ -121,17 +124,134 @@ function ToggleRow({
   title,
   description,
   checked,
+  disabled,
   onCheckedChange,
 }: {
   title: string;
   description?: React.ReactNode;
   checked: boolean;
+  disabled?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
     <SettingRow title={title} description={description}>
-      <Switch aria-label={title} checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch aria-label={title} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
     </SettingRow>
+  );
+}
+
+const rowButtonClassName =
+  "h-7 min-w-[96px] rounded-md bg-gray-100 px-3 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600";
+
+const transcriptionLanguageItems = [
+  { id: "auto", title: "Detect automatically" },
+  { id: "nl", title: "Nederlands" },
+  { id: "en", title: "English" },
+];
+
+/** Settings > Transcription: the Whisper model, turning transcription on, and the transcripts. */
+function TranscriptionSettings({ settings, onChange }: { settings: UserSettings; onChange: () => void }) {
+  const { data: info, refetch: refetchInfo } = useQuery({
+    queryKey: ["transcription-info"],
+    queryFn: () => typedInvoke("get_transcription_info"),
+  });
+  const [progress, setProgress] = useState<number | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const unlisten = listen<TranscriptionModelProgress>("transcription_model_progress", (event) => {
+      const { downloaded, total } = event.payload;
+      setProgress(total ? Math.round((downloaded / total) * 100) : null);
+    });
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, []);
+
+  const downloading = info?.model_downloading || progress !== null;
+
+  /** Downloads the model, then turns transcription on: what the user asked for. */
+  const download = async () => {
+    setError("");
+    setProgress(0);
+    await refetchInfo();
+    try {
+      await typedInvoke("download_transcription_model");
+      await typedInvoke("set_transcription_enabled", { enabled: true });
+      onChange();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setProgress(null);
+      await refetchInfo();
+    }
+  };
+
+  return (
+    <>
+      <SettingsGroup>
+        <ToggleRow
+          title="Transcribe my calls"
+          description="Everything said in a call, written down on this Mac. Nothing is uploaded."
+          checked={settings.transcription_enabled && !!info?.model_downloaded}
+          disabled={downloading}
+          onCheckedChange={(enabled) => {
+            if (enabled && !info?.model_downloaded) {
+              void download();
+              return;
+            }
+            typedInvoke("set_transcription_enabled", { enabled }).then(() => onChange());
+          }}
+        />
+        <SelectRow
+          id="transcription-language"
+          title="Language"
+          description="Pick one when calls are always in the same language: it's more accurate"
+          value={settings.transcription_language}
+          items={transcriptionLanguageItems}
+          onValueChange={(language) => {
+            typedInvoke("set_transcription_language", { language }).then(() => onChange());
+          }}
+        />
+      </SettingsGroup>
+
+      <SettingsGroup title="Model">
+        <SettingRow title="Whisper Turbo" description="Runs on your Mac's GPU. About 550 MB, downloaded once.">
+          {info?.model_downloaded ?
+            <span className="text-xs font-medium text-gray-500 dark:text-zinc-400">Downloaded</span>
+          : <button type="button" className={rowButtonClassName} disabled={downloading} onClick={() => void download()}>
+              {downloading ?
+                progress ?
+                  `Downloading ${progress}%`
+                : "Downloading…"
+              : "Download"}
+            </button>
+          }
+        </SettingRow>
+        {error && (
+          <p role="alert" className="py-2 text-xs text-red-600 dark:text-red-400">
+            {error}
+          </p>
+        )}
+      </SettingsGroup>
+
+      <SettingsGroup title="Transcripts">
+        <SettingRow
+          title="Saved as Markdown, one file per call"
+          description={info?.transcripts_dir ?? "In Hopp's data folder"}
+        >
+          <button
+            type="button"
+            className={rowButtonClassName}
+            onClick={() => {
+              typedInvoke("open_transcripts_folder").catch((e) => setError(String(e)));
+            }}
+          >
+            Open folder
+          </button>
+        </SettingRow>
+      </SettingsGroup>
+    </>
   );
 }
 
@@ -432,7 +552,7 @@ function AppVeilSettings({
   );
 }
 
-type SectionId = "general" | "audio" | "webcam" | "screen-share" | "app-veil" | "hotkeys";
+type SectionId = "general" | "audio" | "webcam" | "screen-share" | "app-veil" | "transcription" | "hotkeys";
 
 const SECTIONS: {
   id: SectionId;
@@ -476,6 +596,14 @@ const SECTIONS: {
     subtitle: "Hide apps from your pairs while you share",
     icon: <HiEyeSlash />,
     tileClassName: "bg-gradient-to-b from-red-400 to-red-500",
+    macOnly: true,
+  },
+  {
+    id: "transcription",
+    title: "Transcription",
+    subtitle: "Transcripts of your calls, made on this Mac",
+    icon: <HiDocumentText />,
+    tileClassName: "bg-gradient-to-b from-blue-400 to-blue-500",
     macOnly: true,
   },
   {
@@ -926,6 +1054,10 @@ function SettingsWindow() {
                 }
               }}
             />
+          )}
+
+          {current.id === "transcription" && OS === "macos" && (
+            <TranscriptionSettings settings={settings} onChange={() => void refetchSettings()} />
           )}
 
           {current.id === "hotkeys" && (

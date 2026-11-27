@@ -125,6 +125,21 @@ export interface UserSettings {
   webcam_preview: boolean;
   open_received_links: boolean;
   share_system_audio: boolean;
+  transcription_enabled: boolean;
+  /** Whisper language code, or "auto". */
+  transcription_language: string;
+}
+
+export interface TranscriptionInfo {
+  model_downloaded: boolean;
+  model_downloading: boolean;
+  transcripts_dir: string;
+}
+
+/** Payload of the `transcription_model_progress` event. */
+export interface TranscriptionModelProgress {
+  downloaded: number;
+  total: number | null;
 }
 
 export type CoreRoleChange = "Sharer" | "Controller" | "None";
@@ -230,6 +245,11 @@ export interface CommandMap {
   set_webcam_preview: { args: { enabled: boolean }; return: void };
   set_open_received_links: { args: { enabled: boolean }; return: void };
   set_share_system_audio: { args: { enabled: boolean }; return: void };
+  get_transcription_info: { args: void; return: TranscriptionInfo };
+  download_transcription_model: { args: void; return: void };
+  set_transcription_enabled: { args: { enabled: boolean }; return: void };
+  set_transcription_language: { args: { language: string }; return: void };
+  open_transcripts_folder: { args: void; return: void };
   set_auto_update_enabled: { args: { enabled: boolean }; return: void };
   set_start_camera_on_call: { args: { enabled: boolean }; return: void };
   set_start_mic_on_call: { args: { enabled: boolean }; return: void };
