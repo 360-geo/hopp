@@ -520,8 +520,9 @@ pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_windo
     let new_position = LogicalPosition::new(x, y);
     let _ = window.set_position(new_position);
     if show_window {
+        // Showing makes the panel key without activating Hopp (see
+        // `make_main_window_a_panel`); focusing would activate Hopp.
         let _ = window.show();
-        let _ = window.set_focus();
     }
 }
 
@@ -539,6 +540,7 @@ pub fn setup_tray_icon(
         let app_handle = app.handle().clone();
 
         if let Some(window) = app_handle.get_webview_window("main") {
+            make_main_window_a_panel(&window);
             show_window_over_fullscreen_apps(&window);
         }
 
@@ -805,6 +807,79 @@ pub fn show_window_over_fullscreen_apps(window: &tauri::WebviewWindow) {
         | NSWindowCollectionBehavior::CanJoinAllSpaces
         | NSWindowCollectionBehavior::FullScreenAuxiliary;
     ns_window.setCollectionBehavior(behavior);
+}
+
+/// Turns the menu bar window into a non-activating panel, as Tuple's popover
+/// is: it takes keyboard input without making Hopp the active app, so the app
+/// behind it keeps its focus. Show it with `show()`, not `set_focus()`, which
+/// activates Hopp.
+///
+/// The window is tao's `TaoWindow`, an NSWindow subclass, and only an NSPanel
+/// honours the non-activating style. So its class is swapped for an NSPanel
+/// subclass that keeps what `TaoWindow` adds: the `focusable` ivar at the same
+/// place, and being able to become the key window. Call on the main thread.
+#[cfg(target_os = "macos")]
+pub fn make_main_window_a_panel(window: &tauri::WebviewWindow) {
+    use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
+    use objc2::{sel, ClassType};
+    use objc2_app_kit::{NSPanel, NSWindow, NSWindowStyleMask};
+    use std::sync::OnceLock;
+
+    extern "C-unwind" fn yes(_: &AnyObject, _: Sel) -> Bool {
+        Bool::YES
+    }
+    extern "C-unwind" fn no(_: &AnyObject, _: Sel) -> Bool {
+        Bool::NO
+    }
+
+    static PANEL_CLASS: OnceLock<Option<&'static AnyClass>> = OnceLock::new();
+
+    let ns_window: &NSWindow = match window.ns_window() {
+        Ok(ns_window) => unsafe { &*ns_window.cast() },
+        Err(e) => {
+            log::error!("make_main_window_a_panel: Failed to get NSWindow: {e:?}");
+            return;
+        }
+    };
+    let panel_class = PANEL_CLASS.get_or_init(|| {
+        let mut builder = ClassBuilder::new(c"HoppPopoverPanel", NSPanel::class())?;
+        builder.add_ivar::<Bool>(c"focusable");
+        unsafe {
+            builder.add_method(
+                sel!(canBecomeKeyWindow),
+                yes as extern "C-unwind" fn(_, _) -> _,
+            );
+            builder.add_method(
+                sel!(canBecomeMainWindow),
+                no as extern "C-unwind" fn(_, _) -> _,
+            );
+        }
+        Some(builder.register())
+    });
+    let Some(panel_class) = *panel_class else {
+        log::error!("make_main_window_a_panel: Failed to register the panel class");
+        return;
+    };
+
+    let object: &AnyObject = ns_window.as_ref();
+    let current_class = object.class();
+    if current_class.instance_size() != panel_class.instance_size() {
+        log::error!(
+            "make_main_window_a_panel: {} and the panel differ in layout ({} vs {} bytes), keeping a normal window",
+            current_class.name().to_string_lossy(),
+            current_class.instance_size(),
+            panel_class.instance_size()
+        );
+        return;
+    }
+    unsafe { AnyObject::set_class(object, panel_class) };
+
+    ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+    let panel: &NSPanel = unsafe { &*(ns_window as *const NSWindow).cast() };
+    // A panel hides when its app deactivates, and Hopp is never the active app here.
+    panel.setHidesOnDeactivate(false);
+    panel.setBecomesKeyOnlyIfNeeded(false);
+    log::info!("make_main_window_a_panel: the menu bar window is a non-activating panel");
 }
 
 /// Lets the core process become the active app (macOS 14+): Hopp is active

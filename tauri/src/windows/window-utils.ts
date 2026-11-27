@@ -1,6 +1,7 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import { OS } from "@/constants";
 const isTauri = typeof window !== "undefined" && window.__TAURI_INTERNALS__ !== undefined;
 
 export let appVersion: null | string = null;
@@ -55,7 +56,11 @@ const showWindow = async (windowLabel: string) => {
     if (window) {
       await window.show();
       await window.unminimize();
-      await window.setFocus();
+      // On macOS the main window is a non-activating panel: showing it is enough,
+      // and focusing would take the focus from the app in front.
+      if (!(windowLabel === "main" && OS === "macos")) {
+        await window.setFocus();
+      }
     }
   }
 };

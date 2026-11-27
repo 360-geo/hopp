@@ -1212,7 +1212,8 @@ fn return_to_menu_bar_mode(app: &tauri::AppHandle, suppress_hide: Arc<AtomicBool
         };
         if window.is_visible().unwrap_or(false) && !window.is_focused().unwrap_or(true) {
             log::info!("return_to_menu_bar_mode: giving the main window its focus back");
-            let _ = window.set_focus();
+            // Showing makes the panel key again without activating Hopp.
+            let _ = window.show();
         }
     });
 }
@@ -1571,6 +1572,9 @@ fn main() {
                     if let Some(window) = main_window {
                         log::info!("Single instance handler: showing main window");
                         let _ = window.show();
+                        // On macOS showing the panel is enough, and focusing
+                        // would take the focus from the app in front.
+                        #[cfg(not(target_os = "macos"))]
                         let _ = window.set_focus();
                     } else {
                         log::error!("Main window not found");
