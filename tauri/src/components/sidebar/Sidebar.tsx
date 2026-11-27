@@ -42,8 +42,9 @@ const SidebarButton = ({
         <button
           className={clsx(
             "p-1.5 rounded-md flex items-center justify-center size-8",
-            !active && "hover:bg-gray-200",
-            active && "bg-white shadow-xs outline-solid outline-1 outline-slate-200",
+            !active && "hover:bg-gray-200 dark:hover:bg-zinc-800",
+            active &&
+              "bg-white shadow-xs outline-solid outline-1 outline-slate-200 dark:bg-zinc-700 dark:outline-zinc-600",
           )}
           {...rest}
         >
@@ -118,7 +119,7 @@ const DownloadNewVersionButton = () => {
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="flex items-center justify-center rounded-lg bg-white bg-linear-to-b from-gray-100 p-1.5 border border-slate-300 mx-1 size-8 w-full hover:scale-[1.025] hover:shadow-xs transition-all duration-300"
+          className="flex items-center justify-center rounded-lg bg-white bg-linear-to-b from-gray-100 p-1.5 border border-slate-300 dark:bg-zinc-800 dark:from-zinc-700 dark:border-zinc-600 mx-1 size-8 w-full hover:scale-[1.025] hover:shadow-xs transition-all duration-300"
           onClick={() => {
             setUpdateInProgress(true);
             if (OS === "macos" && hasPendingUpdate()) {
@@ -130,8 +131,8 @@ const DownloadNewVersionButton = () => {
           disabled={updateInProgress}
         >
           {updateInProgress ?
-            <CgSpinner className="animate-spin size-3.5 text-gray-800" />
-          : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
+            <CgSpinner className="animate-spin size-3.5 text-gray-800 dark:text-zinc-100" />
+          : <LuCircleFadingArrowUp className="size-3.5 text-gray-800 dark:text-zinc-100" />}
         </button>
       </TooltipTrigger>
       <TooltipContent side="right">Download and install update</TooltipContent>
@@ -201,7 +202,7 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
         <TooltipTrigger asChild>
           <div
             className={clsx(
-              "relative flex items-center size-9 justify-center rounded-md bg-white text-sm font-semibold shadow-xs cursor-pointer overflow-hidden",
+              "relative flex items-center size-9 justify-center rounded-md bg-white dark:bg-zinc-700 text-sm font-semibold shadow-xs cursor-pointer overflow-hidden",
               textColor,
             )}
             onClick={handleClick}
@@ -255,8 +256,8 @@ const CallPageButton = () => {
           onClick={() => setTab("call")}
           className={clsx(
             "p-1.5 rounded-md flex items-center justify-center size-8 border border-green-500",
-            !active && "hover:bg-green-50",
-            active && "bg-white shadow-xs",
+            !active && "hover:bg-green-50 dark:hover:bg-green-950",
+            active && "bg-white shadow-xs dark:bg-zinc-700",
           )}
         >
           <FiPhoneCall className="size-4 text-green-500" />
@@ -282,7 +283,7 @@ export const Sidebar = () => {
 
   return (
     <TooltipProvider>
-      <div className="w-[50px] min-w-[50px] h-full bg-slate-100 border-r border-gray-200 flex flex-col">
+      <div className="w-[50px] min-w-[50px] h-full bg-slate-100 border-r border-gray-200 dark:bg-zinc-900 dark:border-zinc-700 flex flex-col">
         <div className="py-3 flex flex-col gap-2 items-center">
           {getAvailableTabs(!!user).map((t) => (
             <SidebarButton key={t.key} active={t.key === tab} label={t.label} onClick={() => setTab(t.key)}>
@@ -309,15 +310,15 @@ export const Sidebar = () => {
             <DropdownMenu>
               <DropdownMenuTrigger>
                 {!user && (
-                  <div className="size-9 shrink-0 rounded-md flex justify-center items-center text-gray-600 outline-solid outline-1 outline-gray-300 shadow-xs cursor-pointer">
+                  <div className="size-9 shrink-0 rounded-md flex justify-center items-center text-gray-600 outline-solid outline-1 outline-gray-300 dark:text-zinc-300 dark:outline-zinc-600 shadow-xs cursor-pointer">
                     <HiOutlineDotsHorizontal />
                   </div>
                 )}
                 {user && (
                   <div
                     className={clsx(
-                      "size-9 shrink-0 rounded-md flex justify-center items-center text-gray-600 outline-solid outline-1 outline-gray-300 shadow-xs cursor-pointer",
-                      !user.avatar_url && "bg-gray-200",
+                      "size-9 shrink-0 rounded-md flex justify-center items-center text-gray-600 outline-solid outline-1 outline-gray-300 dark:text-zinc-300 dark:outline-zinc-600 shadow-xs cursor-pointer",
+                      !user.avatar_url && "bg-gray-200 dark:bg-zinc-700",
                     )}
                     style={{
                       background: user.avatar_url ? `url(${user.avatar_url}) center center/cover no-repeat` : undefined,
@@ -343,7 +344,7 @@ export const Sidebar = () => {
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => invoke("quit_app")}>Quit</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <div className="muted text-slate-500 px-2 py-0.5">App version: {appVersion}</div>
+                <div className="muted text-slate-500 dark:text-zinc-400 px-2 py-0.5">App version: {appVersion}</div>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

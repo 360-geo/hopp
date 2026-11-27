@@ -76,7 +76,7 @@ const RoomPresenceAvatars = ({
             return (
               <Tooltip key={participantId}>
                 <TooltipTrigger asChild>
-                  <div className="size-5 rounded-md overflow-hidden ring-1 ring-white bg-emerald-200 flex items-center justify-center shrink-0">
+                  <div className="size-5 rounded-md overflow-hidden ring-1 ring-white dark:ring-zinc-800 bg-emerald-200 flex items-center justify-center shrink-0">
                     {info.avatar_url ?
                       <img
                         src={info.avatar_url}
@@ -100,8 +100,8 @@ const RoomPresenceAvatars = ({
           return (
             <Tooltip key={participantId}>
               <TooltipTrigger asChild>
-                <div className="size-5 rounded-md overflow-hidden ring-1 ring-white bg-slate-200 flex items-center justify-center shrink-0">
-                  <HiMiniUser className="size-3 text-slate-500" />
+                <div className="size-5 rounded-md overflow-hidden ring-1 ring-white dark:ring-zinc-800 bg-slate-200 dark:bg-zinc-700 flex items-center justify-center shrink-0">
+                  <HiMiniUser className="size-3 text-slate-500 dark:text-zinc-400" />
                 </div>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-xs">
@@ -113,8 +113,8 @@ const RoomPresenceAvatars = ({
         {overflowCount > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="size-5 rounded-md overflow-hidden ring-1 ring-white bg-slate-300 flex items-center justify-center shrink-0">
-                <span className="text-[8px] font-medium text-slate-600">+{overflowCount}</span>
+              <div className="size-5 rounded-md overflow-hidden ring-1 ring-white dark:ring-zinc-800 bg-slate-300 dark:bg-zinc-600 flex items-center justify-center shrink-0">
+                <span className="text-[8px] font-medium text-slate-600 dark:text-zinc-200">+{overflowCount}</span>
               </div>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-xs">
@@ -351,18 +351,18 @@ export const Rooms = () => {
       <div className="flex flex-col gap-2 w-full">
         <div className="flex items-center gap-2 w-full">
           <div className="relative flex-1">
-            <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
+            <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-zinc-400 size-4" />
             <Input
               type="text"
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search rooms"
-              className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
+              className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300 dark:bg-zinc-900/40 dark:focus-visible:ring-blue-500/40"
             />
           </div>
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" size="icon">
-                <Plus className="size-4 text-slate-500" />
+                <Plus className="size-4 text-slate-500 dark:text-zinc-400" />
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-[80%]" container={document.getElementById("app-body")}>
@@ -403,7 +403,7 @@ export const Rooms = () => {
                   disabled={!!callTokens?.isInitialisingCall || isJoiningRoom}
                   size="unsized"
                   title={room.name}
-                  className="flex-1 min-w-0 text-slate-600"
+                  className="flex-1 min-w-0 text-slate-600 dark:text-zinc-300"
                   presenceAvatars={
                     presenceIds.length > 0 ?
                       <RoomPresenceAvatars participantIds={presenceIds} getParticipantInfo={getParticipantInfo} />
@@ -411,7 +411,7 @@ export const Rooms = () => {
                   }
                   cornerIcon={
                     <DropdownMenu>
-                      <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
+                      <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 dark:hover:outline-zinc-600 dark:hover:bg-zinc-700 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
                         <MoreHorizontal className="size-3 m-0" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent className="muted" align="end">
@@ -478,7 +478,7 @@ export const Rooms = () => {
                 <Input
                   id="room-name"
                   name="name"
-                  className="text-xs text-slate-500"
+                  className="text-xs text-slate-500 dark:text-zinc-400"
                   defaultValue={selectedRoom?.name}
                 />
               </div>
@@ -510,7 +510,7 @@ const EmptyRoomsState = ({
   return (
     <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
       <img src={doorImage} alt="No rooms" className="size-38 mb-6" />
-      <p className="text-xs text-slate-600 mb-6 max-w-sm leading-relaxed">
+      <p className="text-xs text-slate-600 dark:text-zinc-300 mb-6 max-w-sm leading-relaxed">
         Think of Rooms as permanent, named meeting spots. They're great for your team's regular get-togethers like daily
         stand-ups or mob programming sessions.
       </p>
@@ -518,7 +518,7 @@ const EmptyRoomsState = ({
         <Button onClick={onCreateRoomClick} className="text-sm" isLoading={isLoadingRooms} disabled={isLoadingRooms}>
           {isLoadingRooms ? "Loading rooms" : "Create room"}
         </Button>
-        <a href="https://docs.hopp.so/rooms" target="_blank" className="text-xs text-slate-600">
+        <a href="https://docs.hopp.so/rooms" target="_blank" className="text-xs text-slate-600 dark:text-zinc-300">
           Read docs
         </a>
       </div>

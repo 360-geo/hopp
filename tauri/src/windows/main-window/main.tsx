@@ -80,6 +80,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           <Toaster
             position="bottom-right"
             toastOptions={{
+              className: "dark:bg-zinc-700! dark:text-zinc-100!",
               duration: 1_500,
               loading: { duration: Infinity },
             }}

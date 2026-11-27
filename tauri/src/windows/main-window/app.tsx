@@ -29,7 +29,7 @@ import { CallCenter } from "@/components/ui/call-center";
 import { listen } from "@tauri-apps/api/event";
 import Invite from "./invite";
 import { sounds } from "@/constants/sounds";
-import { useDisableNativeContextMenu } from "@/lib/hooks";
+import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
 import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
 import { pollUpdates } from "@/lib/auto-update";
@@ -56,6 +56,7 @@ function App() {
 
   const coreProcessCrashedRef = useRef(false);
   useDisableNativeContextMenu();
+  useSystemTheme();
   useSelfHostedAnalytics();
 
   const { useQuery } = useAPI();
@@ -509,7 +510,7 @@ function App() {
   }
 
   return (
-    <div className="container flex flex-row bg-white" id="app-body">
+    <div className="container flex flex-row bg-white dark:bg-zinc-800" id="app-body">
       {/* Action Sidebar */}
       <Sidebar />
       <ScrollArea

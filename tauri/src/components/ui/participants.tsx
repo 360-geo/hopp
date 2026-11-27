@@ -45,18 +45,20 @@ export const Participants = ({ teammates }: ParticipantsProps) => {
   return (
     <div className="flex flex-col gap-2 w-full">
       <div className="relative" style={{ width: "99%" }}>
-        <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
+        <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-zinc-400 size-4" />
         <Input
           type="text"
           placeholder="Search teammates..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
+          className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300 dark:bg-zinc-900/40 dark:focus-visible:ring-blue-500/40"
         />
       </div>
 
       <div className="">
-        <h3 className="muted text-xs text-slate-500 font-medium mb-2">Online ({onlineTeammates.length})</h3>
+        <h3 className="muted text-xs text-slate-500 dark:text-zinc-400 font-medium mb-2">
+          Online ({onlineTeammates.length})
+        </h3>
         <div className="flex flex-col gap-2">
           {onlineTeammates.map((teammate) => (
             <ParticipantRow key={teammate.id} user={teammate} rooms={rooms || []} />
@@ -65,7 +67,9 @@ export const Participants = ({ teammates }: ParticipantsProps) => {
       </div>
 
       <div>
-        <h3 className="muted text-xs text-slate-500 font-medium my-2">Offline ({offlineTeammates.length})</h3>
+        <h3 className="muted text-xs text-slate-500 dark:text-zinc-400 font-medium my-2">
+          Offline ({offlineTeammates.length})
+        </h3>
         <ScrollArea className="max-h-full overflow-y-auto mb-4">
           <div className="flex flex-col gap-2">
             {offlineTeammates.map((teammate) => (

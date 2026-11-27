@@ -13,8 +13,9 @@ type TooltipVariant = "default" | "light" | "transparent";
 
 const tooltipVariantClasses: Record<TooltipVariant, string> = {
   default: "bg-slate-900 text-slate-50 dark:bg-slate-50 dark:text-slate-900",
-  light: "bg-white text-slate-600 ring-1 ring-slate-200 shadow-sm",
-  transparent: "bg-transparent text-slate-600",
+  light:
+    "bg-white text-slate-600 ring-1 ring-slate-200 shadow-sm dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+  transparent: "bg-transparent text-slate-600 dark:text-zinc-300",
 };
 
 const TooltipContent = React.forwardRef<

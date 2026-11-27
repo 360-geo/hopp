@@ -17,15 +17,15 @@ const buttonVariants = cva(
         "destructive-transparent":
           "bg-red-500 bg-opacity-10 text-red-500 shadow-xs hover:bg-red-500/90 dark:bg-red-900 dark:text-slate-50 dark:hover:bg-red-900/90",
         outline:
-          "border border-slate-200 bg-white shadow-xs hover:bg-slate-100 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-800 dark:hover:text-slate-50",
+          "border border-slate-200 bg-white shadow-xs hover:bg-slate-100 hover:text-slate-900 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:hover:text-zinc-50",
         secondary:
           "bg-slate-100 text-slate-900 shadow-xs hover:bg-slate-100/80 dark:bg-slate-800 dark:text-slate-50 dark:hover:bg-slate-800/80",
-        ghost: "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-50",
+        ghost: "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-zinc-700 dark:hover:text-zinc-50",
         link: "text-slate-900 underline-offset-4 hover:underline dark:text-slate-50",
         hidden: "hidden",
         loading: "bg-slate-900 text-slate-50 shadow dark:bg-slate-50 dark:text-slate-900",
         "gradient-white":
-          "btn-gradient-white text-black font-semibold text-xs shadow-[0px_2px_10px_rgba(0,0,0,0.07)] rounded-lg px-6 py-1.5 h-[29px] w-[75px] flex items-center justify-center border border-slate-300 border-opacity-50 hover:scale-[1.025] transition-all duration-300",
+          "btn-gradient-white text-black font-semibold text-xs shadow-[0px_2px_10px_rgba(0,0,0,0.07)] rounded-lg px-6 py-1.5 h-[29px] w-[75px] flex items-center justify-center border border-slate-300 border-opacity-50 dark:text-zinc-100 dark:border-zinc-600 hover:scale-[1.025] transition-all duration-300",
       },
       size: {
         default: "h-9 px-4 py-2",
@@ -43,8 +43,7 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   asChild?: boolean;
   isLoading?: boolean;
 }

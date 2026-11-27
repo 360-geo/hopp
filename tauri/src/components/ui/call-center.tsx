@@ -24,11 +24,19 @@ import { listen } from "@tauri-apps/api/event";
 import { getAllWindows } from "@tauri-apps/api/window";
 
 const Colors = {
-  deactivatedIcon: "text-slate-600",
-  deactivatedText: "text-slate-500",
-  mic: { text: "text-blue-600", icon: "text-blue-600", ring: "ring-blue-600" },
-  camera: { text: "text-green-600", icon: "text-green-600", ring: "ring-green-600" },
-  screen: { text: "text-yellow-600", icon: "text-yellow-600", ring: "ring-yellow-600" },
+  deactivatedIcon: "text-slate-600 dark:text-zinc-300",
+  deactivatedText: "text-slate-500 dark:text-zinc-400",
+  mic: { text: "text-blue-600 dark:text-blue-400", icon: "text-blue-600 dark:text-blue-400", ring: "ring-blue-600" },
+  camera: {
+    text: "text-green-600 dark:text-green-400",
+    icon: "text-green-600 dark:text-green-400",
+    ring: "ring-green-600",
+  },
+  screen: {
+    text: "text-yellow-600 dark:text-yellow-400",
+    icon: "text-yellow-600 dark:text-yellow-400",
+    ring: "ring-yellow-600",
+  },
 } as const;
 
 export function CallCenter() {
@@ -136,12 +144,12 @@ export function CallCenter() {
     callTokens.connectingTo && teammates?.find((t) => t.id === callTokens.connectingTo)?.first_name;
 
   return (
-    <div className="flex flex-col items-center w-full max-w-sm mx-auto bg-white pt-4 mb-4">
+    <div className="flex flex-col items-center w-full max-w-sm mx-auto bg-white dark:bg-zinc-800 pt-4 mb-4">
       {/* Reconnecting Banner */}
       {callTokens.isReconnecting && (
-        <div className="bg-amber-100 border border-amber-300 rounded-md px-3 py-2 mb-3 flex items-center justify-center gap-2">
+        <div className="bg-amber-100 border border-amber-300 dark:bg-amber-950 dark:border-amber-800 rounded-md px-3 py-2 mb-3 flex items-center justify-center gap-2">
           <div className="animate-spin h-4 w-4 border-2 border-amber-600 border-t-transparent rounded-full" />
-          <span className="text-xs font-medium text-amber-800">Reconnecting...</span>
+          <span className="text-xs font-medium text-amber-800 dark:text-amber-200">Reconnecting...</span>
         </div>
       )}
 
@@ -166,7 +174,7 @@ export function CallCenter() {
                       <button
                         type="button"
                         onClick={handleCopyRoomLink}
-                        className="flex items-center justify-center size-5 rounded-sm text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                        className="flex items-center justify-center size-5 rounded-sm text-slate-500 hover:bg-slate-200 hover:text-slate-700 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
                         aria-label="Copy room link"
                       >
                         <HiMiniLink className="size-3" />
@@ -247,7 +255,7 @@ export function CallCenter() {
                       )}
                       {!controllerCursorState && (
                         <div className="relative">
-                          <HiOutlineCursorClick className="size-4 text-red-800" />
+                          <HiOutlineCursorClick className="size-4 text-red-800 dark:text-red-400" />
                           <span className="absolute bottom-[-8px] right-[-7px] text-[10px]">🔒</span>
                         </div>
                       )}
@@ -263,7 +271,7 @@ export function CallCenter() {
               <Tooltip delayDuration={100}>
                 <TooltipTrigger asChild>
                   <Button
-                    className="w-full border-red-500 text-red-600 flex flex-row gap-2"
+                    className="w-full border-red-500 text-red-600 dark:border-red-500/70 dark:text-red-400 flex flex-row gap-2"
                     variant="gradient-white"
                     onClick={handleEndCall}
                   >
@@ -340,13 +348,13 @@ function CallParticipants() {
 
   return (
     <div className="flex flex-col w-full mt-3 px-3">
-      <span className="text-xs font-medium text-slate-600 mb-2">Participants</span>
+      <span className="text-xs font-medium text-slate-600 dark:text-zinc-400 mb-2">Participants</span>
       <div className="flex flex-col gap-3">
         {participantList.map((participant) => (
           <div key={participant.id} className="flex items-center gap-3">
             {participant.user ?
               <>
-                <div className="size-8 rounded-md bg-emerald-200 flex items-center justify-center shrink-0 overflow-hidden ring-1 ring-white">
+                <div className="size-8 rounded-md bg-emerald-200 flex items-center justify-center shrink-0 overflow-hidden ring-1 ring-white dark:ring-zinc-800">
                   {participant.user.avatar_url ?
                     <img
                       src={participant.user.avatar_url}
@@ -373,11 +381,11 @@ function CallParticipants() {
                 </div>
               </>
             : <>
-                <div className="size-8 rounded-md bg-slate-200 flex items-center justify-center shrink-0">
-                  <span className="text-xs font-medium text-slate-600">?</span>
+                <div className="size-8 rounded-md bg-slate-200 dark:bg-zinc-700 flex items-center justify-center shrink-0">
+                  <span className="text-xs font-medium text-slate-600 dark:text-zinc-300">?</span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-600">
+                  <span className="text-sm font-medium text-slate-600 dark:text-zinc-300">
                     Unknown user
                     {participant.isLocal && " (You)"}
                   </span>
@@ -515,7 +523,7 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
                     [Colors.mic.text]: hasAudioEnabled,
                     [Colors.deactivatedIcon]: !hasAudioEnabled,
                   })}
-                  className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+                  className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 dark:hover:outline-zinc-600 dark:hover:bg-zinc-700 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
                 />
                 <SelectPortal container={document.getElementsByClassName("container")[0]}>
                   <SelectContent align="center">
@@ -589,7 +597,7 @@ function ScreenShareIcon({ callTokens, shortcut }: { callTokens: CallState | nul
               callTokens?.role === ParticipantRole.SHARER && (
                 <button
                   onClick={changeScreenShare}
-                  className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
+                  className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 dark:hover:outline-zinc-600 dark:hover:bg-zinc-700 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
                 >
                   <ChevronDownIcon
                     className={clsx("size-4", {
@@ -744,7 +752,7 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
                     [Colors.camera.text]: cameraEnabled,
                     [Colors.deactivatedIcon]: !cameraEnabled,
                   })}
-                  className="hover:outline hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
+                  className="hover:outline hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 dark:hover:outline-zinc-600 dark:hover:bg-zinc-700 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
                 />
                 <SelectPortal container={document.getElementsByClassName("container")[0]}>
                   <SelectContent align="center">

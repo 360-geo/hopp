@@ -433,7 +433,7 @@ export const ParticipantRow = (props: {
       <div className="flex flex-col justify-center h-10 overflow-hidden">
         <TruncatedName text={`${props.user.first_name} ${props.user.last_name}`} className="medium" />
 
-        <div className="muted truncate text-xs text-slate-500">
+        <div className="muted truncate text-xs text-slate-500 dark:text-zinc-400">
           {userPresence ?
             userPresence.roomName ?
               `In ${userPresence.roomName}`
@@ -450,7 +450,7 @@ export const ParticipantRow = (props: {
             variant="gradient-white"
             onClick={joinRoom}
             disabled={!targetRoom || isJoiningRoom.current}
-            className="px-2 w-auto h-7 flex flex-row items-center gap-1 text-slate-600"
+            className="px-3.5 w-auto h-7 flex flex-row items-center gap-1.5 text-slate-600 dark:text-zinc-200"
           >
             <HiPhoneArrowDownLeft className="size-3" />
             Join
@@ -460,7 +460,7 @@ export const ParticipantRow = (props: {
             variant="gradient-white"
             onClick={joinCall}
             disabled={hasIncomingCall}
-            className="px-2 w-auto h-7 flex flex-row items-center gap-1 text-slate-600"
+            className="px-3.5 w-auto h-7 flex flex-row items-center gap-1.5 text-slate-600 dark:text-zinc-200"
           >
             <HiPhoneArrowDownLeft className="size-3" />
             Join
@@ -477,9 +477,9 @@ export const ParticipantRow = (props: {
             }}
             disabled={hasIncomingCall || !props.user.is_active || (inviting !== null && !isInviting)}
             className={clsx(
-              "px-2 w-auto h-7 flex flex-row items-center gap-1",
-              !isInviting && "text-slate-600",
-              isInviting && "text-red-500",
+              "px-3.5 w-auto h-7 flex flex-row items-center gap-1.5",
+              !isInviting && "text-slate-600 dark:text-zinc-200",
+              isInviting && "text-red-500 dark:text-red-400",
             )}
           >
             {isInviting ?
@@ -510,9 +510,9 @@ export const ParticipantRow = (props: {
             }}
             disabled={inACall || hasIncomingCall}
             className={clsx(
-              "px-2 w-auto h-7 flex flex-row items-center gap-1",
-              !isCalling && "text-slate-600",
-              isCalling && "text-red-500",
+              "px-3.5 w-auto h-7 flex flex-row items-center gap-1.5",
+              !isCalling && "text-slate-600 dark:text-zinc-200",
+              isCalling && "text-red-500 dark:text-red-400",
             )}
           >
             {isCalling ?

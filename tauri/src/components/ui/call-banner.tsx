@@ -154,14 +154,19 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
         </div>
       </div>
       <div className="flex flex-row gap-1">
-        <Button variant="ghost" size="sm" onClick={handleReject} className="hover:bg-red-100 flex flex-row gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleReject}
+          className="hover:bg-red-100 dark:hover:bg-red-950 flex flex-row gap-2"
+        >
           <HiMiniPhoneXMark className="size-4" /> Not now
         </Button>
         <Button
           variant="outline"
           size="sm"
           onClick={handleAnswer}
-          className="btn-gradient-white hover:scale-[1.025] transition-all duration-200 flex flex-row gap-2 px-4 hover:text-green-700"
+          className="btn-gradient-white hover:scale-[1.025] transition-all duration-200 flex flex-row gap-2 px-4 hover:text-green-700 dark:hover:text-green-400"
         >
           <HiMiniPhoneArrowDownLeft className="size-4 min-w-4 min-h-4" /> Answer
         </Button>

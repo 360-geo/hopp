@@ -15,13 +15,13 @@ export const RoomButton: React.FC<
     <button
       {...props}
       className={clsx(
-        "group h-16 flex flex-col p-2 justify-between border border-gray-200 rounded-md overflow-hidden shadow-xs relative",
+        "group h-16 flex flex-col p-2 justify-between border border-gray-200 dark:border-zinc-700 dark:hover:bg-zinc-700/50 rounded-md overflow-hidden shadow-xs relative",
         props.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
         className,
       )}
     >
       <div className="flex flex-row justify-between w-full">
-        <span className="flex-1 text-balance text-left text-xs font-medium text-slate-800 overflow-hidden line-clamp-2 leading-tight">
+        <span className="flex-1 text-balance text-left text-xs font-medium text-slate-800 dark:text-zinc-100 overflow-hidden line-clamp-2 leading-tight">
           {title}
         </span>
         {cornerIcon && (
@@ -30,7 +30,7 @@ export const RoomButton: React.FC<
               e.stopPropagation();
               e.preventDefault();
             }}
-            className="flex flex-row justify-center text-gray-500 size-4 shrink-0"
+            className="flex flex-row justify-center text-gray-500 dark:text-zinc-400 size-4 shrink-0"
           >
             {cornerIcon}
           </span>

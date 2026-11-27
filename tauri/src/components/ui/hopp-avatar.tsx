@@ -20,13 +20,12 @@ interface HoppAvatarProps {
   callPeers?: CallPeer[];
 }
 
-
 const ColorsClasses: string[] = [
   "oklch(54.1% 0.281 293.009)", // Violet 600
   "oklch(59.6% 0.145 163.225)", // Emerald 700
   "oklch(55.5% 0.163 48.998)", // Amber 700
-  "oklch(51.1% 0.096 186.391)" // Teal 700
-]
+  "oklch(51.1% 0.096 186.391)", // Teal 700
+];
 
 // Source: https://stackoverflow.com/a/7616484
 const generateHash = (string: string) => {
@@ -45,9 +44,7 @@ export function pickFromArray<T>(key: string, options: readonly T[]): T {
   return options[index] as T;
 }
 
-
 export const HoppAvatar = ({ src, firstName, lastName, status, className, isMuted, callPeers }: HoppAvatarProps) => {
-
   const peers = callPeers ?? [];
 
   if (peers.length === 0) {
@@ -74,14 +71,17 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
         )}
         {status && (
           <div
-            className={clsx("absolute bottom-0 right-0 size-2 outline-solid outline-3 outline-white rounded-full", {
-              "bg-emerald-500": status === "online",
-              "bg-red-400": status === "offline",
-            })}
-          />)
-        }
+            className={clsx(
+              "absolute bottom-0 right-0 size-2 outline-solid outline-3 outline-white dark:outline-zinc-800 rounded-full",
+              {
+                "bg-emerald-500": status === "online",
+                "bg-red-400": status === "offline",
+              },
+            )}
+          />
+        )}
       </div>
-    )
+    );
   }
 
   if (peers.length === 1 && peers[0]) {
@@ -90,7 +90,7 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
       <div className="relative overflow-visible size-10">
         <Avatar
           className={clsx(
-            "size-[23px] shrink-0 rounded-[5px] text-white flex justify-center items-center overflow-hidden border border-white",
+            "size-[23px] shrink-0 rounded-[5px] text-white flex justify-center items-center overflow-hidden border border-white dark:border-zinc-800",
             className,
           )}
           style={{ backgroundColor: pickFromArray(firstName + lastName, ColorsClasses) }}
@@ -104,7 +104,7 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
 
         <Avatar
           className={clsx(
-            "size-[23px] shrink-0 rounded-[5px] text-white flex justify-center items-center overflow-hidden border border-white absolute bottom-0 right-0",
+            "size-[23px] shrink-0 rounded-[5px] text-white flex justify-center items-center overflow-hidden border border-white dark:border-zinc-800 absolute bottom-0 right-0",
             className,
           )}
           style={{ backgroundColor: pickFromArray(peers[0].firstName + peers[0].lastName, ColorsClasses) }}
@@ -116,9 +116,8 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
           </AvatarFallback>
         </Avatar>
       </div>
-    )
+    );
   }
-
 
   if (peers.length >= 2 && peers.every((peer) => peer !== undefined)) {
     const isOverflow = peers.length > 3;
@@ -159,13 +158,13 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
           </Avatar>
         ))}
         {isOverflow && (
-          <div className="size-[19px] shrink-0 text-slate-600 flex justify-center items-center overflow-hidden text-[11px] font-semibold">
+          <div className="size-[19px] shrink-0 text-slate-600 dark:text-zinc-300 flex justify-center items-center overflow-hidden text-[11px] font-semibold">
             +{peers.length - 2}
           </div>
         )}
       </div>
-    )
+    );
   }
 
-  return null
-}
+  return null;
+};
