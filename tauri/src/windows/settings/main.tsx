@@ -618,6 +618,14 @@ function SettingsWindow() {
                   }}
                 />
                 <ToggleRow
+                  title="Notify me when I'm alone in a call"
+                  description="After a minute on your own, and every 5 minutes after that"
+                  checked={settings.notify_when_alone}
+                  onCheckedChange={(v) => {
+                    typedInvoke("set_notify_when_alone", { enabled: v }).then(() => refetchSettings());
+                  }}
+                />
+                <ToggleRow
                   title="Call feedback popup"
                   description="Ask how the call went when it ends"
                   checked={settings.call_feedback_popup}

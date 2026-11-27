@@ -30,6 +30,7 @@ import { listen } from "@tauri-apps/api/event";
 import Invite from "./invite";
 import { sounds } from "@/constants/sounds";
 import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
+import { useAloneInCallReminder } from "@/lib/alone-in-call";
 import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
 import { pollUpdates } from "@/lib/auto-update";
@@ -57,6 +58,7 @@ function App() {
   const coreProcessCrashedRef = useRef(false);
   useDisableNativeContextMenu();
   useSystemTheme();
+  useAloneInCallReminder();
   useSelfHostedAnalytics();
 
   const { useQuery } = useAPI();

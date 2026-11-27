@@ -76,6 +76,9 @@ pub struct UserSettings {
     pub auto_update_enabled: bool,
     #[serde(default = "default_app_veil_applications")]
     pub app_veil_applications: Vec<AppVeilApplication>,
+    /// Remind the user with a notification while they're the only one left in a call.
+    #[serde(default = "default_true")]
+    pub notify_when_alone: bool,
 }
 
 impl Default for UserSettings {
@@ -99,6 +102,7 @@ impl Default for UserSettings {
             telemetry_enabled: true,
             auto_update_enabled: true,
             app_veil_applications: default_app_veil_applications(),
+            notify_when_alone: true,
         }
     }
 }
