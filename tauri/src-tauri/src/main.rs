@@ -681,6 +681,15 @@ async fn create_feedback_window(
 #[tauri::command(async)]
 async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("create_settings_window");
+    // Settings is a regular window: in the Dock and in Cmd+Tab while open.
+    #[cfg(target_os = "macos")]
+    {
+        app.state::<Mutex<AppData>>()
+            .lock()
+            .unwrap()
+            .settings_window_open = true;
+        sync_dock_icon(&app);
+    }
     hopp::create_media_window(
         &app,
         hopp::MediaWindowConfig {
@@ -1153,6 +1162,37 @@ fn return_to_menu_bar_mode(app: &tauri::AppHandle, suppress_hide: Arc<AtomicBool
     });
 }
 
+/// Hopp is a menu bar app. It shows a Dock icon, and so takes part in Cmd+Tab,
+/// only while one of its windows is meant to be switched to: Settings, or a
+/// teammate's shared screen (when that setting is on).
+#[cfg(target_os = "macos")]
+fn wants_dock_icon(data: &AppData) -> bool {
+    data.settings_window_open
+        || (data.screen_share_window_shown && data.app_state.user_settings().show_dock_icon_in_call)
+}
+
+/// Shows or hides the Dock icon to match `wants_dock_icon`.
+///
+/// Call without holding the `AppData` lock: it takes the lock itself.
+#[cfg(target_os = "macos")]
+fn sync_dock_icon(app: &tauri::AppHandle) {
+    let state = app.state::<Mutex<AppData>>();
+    let mut data = state.lock().unwrap();
+    let wanted = wants_dock_icon(&data);
+    if wanted == data.activation_policy_regular {
+        return;
+    }
+    data.activation_policy_regular = wanted;
+    if wanted {
+        drop(data);
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    } else {
+        let suppress = data.suppress_hide_on_call_end.clone();
+        drop(data);
+        return_to_menu_bar_mode(app, suppress);
+    }
+}
+
 /// Hopp lives in the menu bar, so Cmd+Q closes the window in front instead of
 /// quitting. The main window hides, as when clicking outside it.
 #[cfg(target_os = "macos")]
@@ -1225,10 +1265,9 @@ fn end_call(app: tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     {
         data.sleep_prevention.disable();
-        data.activation_policy_regular = false;
-        let suppress = data.suppress_hide_on_call_end.clone();
+        data.screen_share_window_shown = false;
         drop(data);
-        return_to_menu_bar_mode(&app, suppress);
+        sync_dock_icon(&app);
     }
     shortcuts::unregister_call_shortcuts(&app);
 }
@@ -1286,10 +1325,9 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 #[cfg(target_os = "macos")]
                 {
                     data.sleep_prevention.disable();
-                    data.activation_policy_regular = false;
-                    let suppress = data.suppress_hide_on_call_end.clone();
+                    data.screen_share_window_shown = false;
                     drop(data);
-                    return_to_menu_bar_mode(&app, suppress);
+                    sync_dock_icon(&app);
                 }
                 #[cfg(not(target_os = "macos"))]
                 drop(data);
@@ -1304,19 +1342,11 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 // screen is on view, the one Hopp window it can bring forward.
                 #[cfg(target_os = "macos")]
                 {
-                    let data = app.state::<Mutex<AppData>>();
-                    let mut data = data.lock().unwrap();
-                    let show_dock_icon = data.app_state.user_settings().show_dock_icon_in_call;
-                    if shown && show_dock_icon && !data.activation_policy_regular {
-                        data.activation_policy_regular = true;
-                        drop(data);
-                        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-                    } else if !shown && data.activation_policy_regular {
-                        data.activation_policy_regular = false;
-                        let suppress = data.suppress_hide_on_call_end.clone();
-                        drop(data);
-                        return_to_menu_bar_mode(&app, suppress);
-                    }
+                    app.state::<Mutex<AppData>>()
+                        .lock()
+                        .unwrap()
+                        .screen_share_window_shown = shown;
+                    sync_dock_icon(&app);
                 }
             }
             Message::ControllerDrawPersistChanged(persist) => {
@@ -1934,6 +1964,19 @@ fn main() {
             log::info!("Exit requested");
             sentry_utils::upload_logs_event("Tauri app quit".to_string());
             sentry_utils::flush(std::time::Duration::from_secs(2));
+        }
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } if label == "settings" => {
+            app_handle
+                .state::<Mutex<AppData>>()
+                .lock()
+                .unwrap()
+                .settings_window_open = false;
+            sync_dock_icon(app_handle);
         }
         tauri::RunEvent::WindowEvent {
             label,

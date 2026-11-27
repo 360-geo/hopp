@@ -103,6 +103,14 @@ pub struct AppData {
     #[cfg(target_os = "macos")]
     pub activation_policy_regular: bool,
 
+    /// Whether a teammate's shared screen is on view in the screenshare window.
+    #[cfg(target_os = "macos")]
+    pub screen_share_window_shown: bool,
+
+    /// Whether the Settings window is open.
+    #[cfg(target_os = "macos")]
+    pub settings_window_open: bool,
+
     /// macOS sleep prevention state — holds an activity assertion while a call is active.
     #[cfg(target_os = "macos")]
     pub sleep_prevention: sleep_prevention::SleepPrevention,
@@ -128,6 +136,10 @@ impl AppData {
             activation_observer: None,
             #[cfg(target_os = "macos")]
             activation_policy_regular: false,
+            #[cfg(target_os = "macos")]
+            screen_share_window_shown: false,
+            #[cfg(target_os = "macos")]
+            settings_window_open: false,
             suppress_hide_on_call_end,
             drawing_enabled: false,
             call_active: false,

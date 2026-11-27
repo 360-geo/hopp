@@ -588,6 +588,18 @@ html.dark .camera-body #root {
   background-color: var(--bg-gray-dark);
 }
 
+.settings-body {
+  margin: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.settings-body #root {
+  height: 100%;
+  width: 100%;
+}
+
 .permissions-body {
   margin: 0;
   height: 100vh;
