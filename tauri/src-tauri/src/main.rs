@@ -1085,6 +1085,18 @@ fn set_audio_output(app: tauri::AppHandle, device_name: Option<String>) {
 }
 
 #[tauri::command(async)]
+fn set_auto_mic_volume(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_auto_mic_volume: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.auto_mic_volume = enabled);
+    if let Err(e) = data.sender.send(Message::SetAutoMicVolume(enabled)) {
+        log::error!("set_auto_mic_volume: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
 fn set_default_mic(
     app: tauri::AppHandle,
     device_name: Option<String>,
@@ -1627,6 +1639,10 @@ fn main() {
             if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
             }
+            let auto_mic_volume = app_state.user_settings().auto_mic_volume;
+            if let Err(e) = sender.send(Message::SetAutoMicVolume(auto_mic_volume)) {
+                log::error!("Failed to send initial auto_mic_volume: {e:?}");
+            }
             let audio_output = app_state.user_settings().audio_output;
             if let Err(e) = sender.send(Message::SetAudioOutput(audio_output)) {
                 log::error!("Failed to send initial audio_output: {e:?}");
@@ -1993,6 +2009,7 @@ fn main() {
             list_microphones,
             list_speakers,
             set_audio_output,
+            set_auto_mic_volume,
             select_microphone,
             list_webcams,
             start_camera,

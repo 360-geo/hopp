@@ -796,6 +796,14 @@ function SettingsWindow() {
 
               <SettingsGroup>
                 <ToggleRow
+                  title="Automatically adjust my microphone volume"
+                  description="Moves your Mac's input volume during calls so you're heard at a steady level"
+                  checked={settings.auto_mic_volume}
+                  onCheckedChange={(v) => {
+                    typedInvoke("set_auto_mic_volume", { enabled: v }).then(() => refetchSettings());
+                  }}
+                />
+                <ToggleRow
                   title="Suppress my background noise"
                   checked={settings.noise_cancellation_enabled}
                   onCheckedChange={(v) => {

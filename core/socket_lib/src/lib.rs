@@ -226,6 +226,9 @@ pub enum Message {
     AudioOutputList(Vec<AudioDevice>),
     /// The device call audio plays on; `None` follows the macOS default output.
     SetAudioOutput(Option<String>),
+    /// Let the core move the microphone's macOS input volume so speech
+    /// reaches it at a steady level.
+    SetAutoMicVolume(bool),
     StartAudioCapture(AudioCaptureMessage),
     StartAudioCaptureResult(Result<(), String>),
     StopAudioCapture,

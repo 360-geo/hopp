@@ -83,6 +83,10 @@ pub struct UserSettings {
     /// system default output.
     #[serde(default)]
     pub audio_output: Option<String>,
+    /// Move the macOS input volume during calls so speech reaches the
+    /// microphone at a steady level.
+    #[serde(default = "default_true")]
+    pub auto_mic_volume: bool,
 }
 
 impl Default for UserSettings {
@@ -108,6 +112,7 @@ impl Default for UserSettings {
             app_veil_applications: default_app_veil_applications(),
             notify_when_alone: true,
             audio_output: None,
+            auto_mic_volume: true,
         }
     }
 }

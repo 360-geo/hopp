@@ -121,6 +121,7 @@ export interface UserSettings {
   notify_when_alone: boolean;
   /** The speakers or headphones call audio plays on; null follows the system default output. */
   audio_output: string | null;
+  auto_mic_volume: boolean;
 }
 
 export type CoreRoleChange = "Sharer" | "Controller" | "None";
@@ -222,6 +223,7 @@ export interface CommandMap {
   set_notify_when_alone: { args: { enabled: boolean }; return: void };
   list_speakers: { args: void; return: AudioDevice[] };
   set_audio_output: { args: { deviceName: string | null }; return: void };
+  set_auto_mic_volume: { args: { enabled: boolean }; return: void };
   set_auto_update_enabled: { args: { enabled: boolean }; return: void };
   set_start_camera_on_call: { args: { enabled: boolean }; return: void };
   set_start_mic_on_call: { args: { enabled: boolean }; return: void };

@@ -1,6 +1,8 @@
 pub mod audio {
+    pub mod auto_volume;
     pub mod capturer;
     pub mod device_monitor;
+    pub mod input_volume;
     pub mod mixer;
     pub mod player;
     pub mod processing;
@@ -2526,6 +2528,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::SetAudioOutput(output_device) => {
                 self.audio_player.set_output_device(output_device);
             }
+            UserEvent::SetAutoMicVolume(enabled) => {
+                log::info!("user_event: SetAutoMicVolume({enabled})");
+                self.audio_capturer.set_auto_volume(enabled);
+            }
+            UserEvent::AdjustMicVolume(change_db) => {
+                if self.audio_capturer.is_capturing() {
+                    let device = self.audio_capturer.volume_device_name();
+                    match audio::input_volume::adjust_input_volume(device.as_deref(), change_db) {
+                        Ok(Some((before, after))) => log::info!(
+                            "Auto mic volume: {change_db:+.0} dB on {device:?}, {before:.2} -> {after:.2}"
+                        ),
+                        Ok(None) => log::debug!("Auto mic volume: {device:?} is at its limit"),
+                        Err(e) => log::debug!("Auto mic volume: {e}"),
+                    }
+                }
+            }
             UserEvent::DefaultInputDeviceChanged => {
                 self.audio_capturer.handle_default_device_changed(false);
                 self.set_call_controls_mic(
@@ -3320,6 +3338,9 @@ pub enum UserEvent {
     DefaultOutputDeviceChanged,
     ListAudioOutputs,
     SetAudioOutput(Option<String>),
+    SetAutoMicVolume(bool),
+    /// The capture thread asks to move the microphone's input volume by this many dB.
+    AdjustMicVolume(f32),
     DefaultInputDeviceChanged,
     AudioCaptureError,
     SetNoiseCancellation(bool),
@@ -3446,6 +3467,7 @@ impl RenderEventLoop {
                     Message::SetAudioOutput(output_device) => {
                         UserEvent::SetAudioOutput(output_device)
                     }
+                    Message::SetAutoMicVolume(enabled) => UserEvent::SetAutoMicVolume(enabled),
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture {
                         msg,
                         from_socket: true,

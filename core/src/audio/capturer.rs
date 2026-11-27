@@ -8,6 +8,7 @@ use std::sync::Arc;
 use thread_priority::{set_current_thread_priority, ThreadPriority};
 use tokio::sync::mpsc;
 
+use super::auto_volume::AutoVolume;
 use super::mixer::MIXER_SAMPLE_RATE;
 
 const TARGET_SAMPLE_RATE: u32 = MIXER_SAMPLE_RATE;
@@ -140,6 +141,8 @@ pub struct Capturer {
     _device_monitor: super::device_monitor::DeviceMonitor,
     socket: socket_lib::SocketSender,
     proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>,
+    /// Automatic microphone volume (Settings > Audio), read by the capture thread.
+    auto_volume_enabled: Arc<AtomicBool>,
 }
 
 impl Capturer {
@@ -161,7 +164,28 @@ impl Capturer {
             .expect("Failed to start input device monitor"),
             socket,
             proxy,
+            auto_volume_enabled: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    pub fn set_auto_volume(&self, enabled: bool) {
+        self.auto_volume_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// The device whose input volume automatic adjustment moves: `None` for
+    /// the system default input, else the raw name of the picked microphone.
+    pub fn volume_device_name(&self) -> Option<String> {
+        if self.follows_system_default {
+            return None;
+        }
+        let active = self.active_device_name.as_deref()?;
+        Some(
+            self.available_devices
+                .iter()
+                .find(|device| device.ui_name == active)
+                .map(|device| device.name.clone())
+                .unwrap_or_else(|| active.to_string()),
+        )
     }
 
     pub fn list_sources(&mut self) -> Vec<socket_lib::AudioDevice> {
@@ -296,6 +320,7 @@ impl Capturer {
 
         let socket_for_level = self.socket.clone();
         let proxy_for_thread = self.proxy.clone();
+        let auto_volume_enabled = Arc::clone(&self.auto_volume_enabled);
 
         std::thread::spawn(move || {
             match set_current_thread_priority(ThreadPriority::Max) {
@@ -307,6 +332,7 @@ impl Capturer {
             let mut mic = mic;
             let mut resampler = AudioResampler::default();
             let mut level = LevelEmitter::new(socket_for_level.clone());
+            let mut auto_volume = AutoVolume::default();
             let mut unexpected_exit = false;
 
             let in_samples_per_frame = actual_sample_rate / SAMPLES_DIVIDER;
@@ -343,6 +369,13 @@ impl Capturer {
                     TARGET_CHANNELS as u32,
                     TARGET_SAMPLE_RATE,
                 );
+
+                if let Some(change_db) = auto_volume.push_frame(output) {
+                    if auto_volume_enabled.load(Ordering::Relaxed) {
+                        let _ = proxy_for_thread
+                            .send_event(crate::UserEvent::AdjustMicVolume(change_db));
+                    }
+                }
 
                 if sample_tx.send(output.to_vec()).is_err() {
                     break;
