@@ -27,6 +27,10 @@ const HARD_CAP_FRAMES: usize = 80; // 800ms
 /// buffer absorbs network jitter; this covers stalls in local delivery, after
 /// which the late frames arrive in a burst.
 const TARGET_DELAY: usize = 6; // 60 ms
+/// Frames to collect before playback starts, at the start of a call and after
+/// the buffer ran dry. Playing the first frames as they trickle in leaves no
+/// cushion, so the opening seconds of a call kept running dry.
+const START_DELAY: usize = 5; // 50 ms
 /// Above this the buffer drops speech too, to bound latency after a long stall.
 const MAX_DELAY: usize = 15; // 150 ms
 /// Frames quieter than this RMS (about -45 dBFS) can be skipped unheard.
@@ -66,12 +70,15 @@ fn rms(frame: &[i16]) -> f64 {
 /// Takes the next frame to play. Above `TARGET_DELAY` the buffer shrinks only
 /// by skipping quiet frames, so a burst after a stall becomes cushion and drains
 /// during the next pause instead of cutting speech; above `MAX_DELAY` it drops
-/// speech too.
+/// speech too. Playback (re)starts once `START_DELAY` frames are buffered.
 fn next_frame(buffer: &mut VecDeque<Vec<i16>>, stats: &PlaybackStats) -> Option<Vec<i16>> {
     stats.mixes.fetch_add(1, Ordering::Relaxed);
     stats
         .depth_sum
         .fetch_add(buffer.len() as u32, Ordering::Relaxed);
+    if !stats.playing.load(Ordering::Relaxed) && buffer.len() < START_DELAY {
+        return None;
+    }
     if buffer.len() > TARGET_DELAY {
         let front_is_quiet = buffer.front().is_some_and(|frame| rms(frame) < QUIET_RMS);
         if front_is_quiet {
@@ -392,9 +399,34 @@ mod tests {
         assert!(next_frame(&mut buffer, &stats).is_none());
         assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
 
+        buffer.extend((0..START_DELAY).map(|_| speech()));
+        for _ in 0..START_DELAY {
+            assert!(next_frame(&mut buffer, &stats).is_some());
+        }
+        assert!(next_frame(&mut buffer, &stats).is_none());
+        assert!(next_frame(&mut buffer, &stats).is_none());
+        assert_eq!(stats.underruns.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn waits_for_a_cushion_before_playing() {
+        let stats = PlaybackStats::default();
+        let mut buffer = VecDeque::new();
+        for _ in 1..START_DELAY {
+            buffer.push_back(speech());
+            assert!(next_frame(&mut buffer, &stats).is_none());
+        }
         buffer.push_back(speech());
         assert!(next_frame(&mut buffer, &stats).is_some());
+        assert_eq!(buffer.len(), START_DELAY - 1);
+
+        // Once playing, the cushion is played out without waiting again.
+        buffer.truncate(1);
+        assert!(next_frame(&mut buffer, &stats).is_some());
+
+        // After running dry, playback waits for a full cushion again.
         assert!(next_frame(&mut buffer, &stats).is_none());
+        buffer.push_back(speech());
         assert!(next_frame(&mut buffer, &stats).is_none());
         assert_eq!(stats.underruns.load(Ordering::Relaxed), 1);
     }
