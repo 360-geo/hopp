@@ -880,6 +880,17 @@ function SettingsWindow() {
                 />
               </SettingsGroup>
 
+              <SettingsGroup title="Links">
+                <ToggleRow
+                  title="Open links my pair sends me"
+                  description="While you share, a viewer can send you the link on their clipboard. Off: it's copied to your clipboard instead."
+                  checked={settings.open_received_links}
+                  onCheckedChange={(v) => {
+                    typedInvoke("set_open_received_links", { enabled: v }).then(() => refetchSettings());
+                  }}
+                />
+              </SettingsGroup>
+
               <SettingsGroup title="Drawing">
                 <ToggleRow
                   title="Keep drawings until right-click"

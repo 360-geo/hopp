@@ -1085,6 +1085,61 @@ fn set_audio_output(app: tauri::AppHandle, device_name: Option<String>) {
 }
 
 #[tauri::command(async)]
+fn set_open_received_links(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_open_received_links: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.open_received_links = enabled);
+}
+
+/// A viewer sent a link while the user shares their screen: open it in the
+/// default browser, or copy it and say so, as Settings say. Only http(s).
+fn handle_received_link(app: &tauri::AppHandle, link: socket_lib::ReceivedLink) {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    use tauri_plugin_notification::NotificationExt;
+    use tauri_plugin_opener::OpenerExt;
+
+    let is_web_link = tauri::Url::parse(&link.url)
+        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some());
+    if !is_web_link {
+        log::warn!("handle_received_link: ignoring a link that isn't http(s)");
+        return;
+    }
+    let sender = if link.sender_name.is_empty() {
+        "Your pair".to_string()
+    } else {
+        link.sender_name.clone()
+    };
+    let open = {
+        let data = app.state::<Mutex<AppData>>();
+        let data = data.lock().unwrap();
+        data.app_state.user_settings().open_received_links
+    };
+    if open {
+        log::info!("handle_received_link: opening a link from {sender}");
+        if let Err(e) = app.opener().open_url(&link.url, None::<&str>) {
+            log::error!("handle_received_link: failed to open the link: {e:?}");
+        }
+        return;
+    }
+    log::info!("handle_received_link: copying a link from {sender}");
+    if let Err(e) = app.clipboard().write_text(link.url.clone()) {
+        log::error!("handle_received_link: failed to copy the link: {e:?}");
+        return;
+    }
+    if let Err(e) = app
+        .notification()
+        .builder()
+        .title(format!("{sender} sent you a link"))
+        .body(format!("Copied to your clipboard: {}", link.url))
+        .show()
+    {
+        log::error!("handle_received_link: failed to notify: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
 fn set_webcam_preview(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_webcam_preview: {enabled}");
     let data = app.state::<Mutex<AppData>>();
@@ -1464,6 +1519,7 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     );
                 }
             }
+            Message::LinkReceived(link) => handle_received_link(&app, link),
             Message::ActiveCameraChanged(device_name) => {
                 log::info!("forward_core_events: active camera changed to: {device_name}");
                 let data = app.state::<Mutex<AppData>>();
@@ -2031,6 +2087,7 @@ fn main() {
             set_audio_output,
             set_auto_mic_volume,
             set_webcam_preview,
+            set_open_received_links,
             select_microphone,
             list_webcams,
             start_camera,

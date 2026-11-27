@@ -179,6 +179,7 @@ enum RoomServiceCommand {
     PublishPasteFromClipboard(PasteFromClipboardData),
     PublishClipboardData(ClipboardDataPayload),
     PublishClickAnimation(ClientPoint),
+    PublishLink(String),
     PublishAppVeilSnapshot { force: bool },
 }
 
@@ -215,6 +216,7 @@ impl std::fmt::Debug for RoomServiceCommand {
             Self::PublishPasteFromClipboard(..) => write!(f, "PublishPasteFromClipboard"),
             Self::PublishClipboardData(..) => write!(f, "PublishClipboardData"),
             Self::PublishClickAnimation(..) => write!(f, "PublishClickAnimation"),
+            Self::PublishLink(..) => write!(f, "PublishLink"),
             Self::PublishAppVeilSnapshot { force } => {
                 write!(f, "PublishAppVeilSnapshot {{ force: {force} }}")
             }
@@ -798,6 +800,16 @@ impl RoomService {
     }
 
     /// Publishes a click animation event to the room.
+    /// Sends a link to the sharer, whose browser opens it.
+    pub fn publish_link(&self, url: String) {
+        if let Err(e) = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishLink(url))
+        {
+            log::error!("publish_link: Failed to send command: {e:?}");
+        }
+    }
+
     pub fn publish_click_animation(&self, point: ClientPoint) {
         log::debug!("publish_click_animation: {point:?}");
         let res = self
@@ -1827,6 +1839,27 @@ async fn room_service_commands(
                     log::error!("room_service_commands: Failed to publish clipboard data: {e:?}");
                 }
             }
+            RoomServiceCommand::PublishLink(url) => {
+                let inner_room = inner.room.lock().await;
+                let Some(room) = inner_room.as_ref() else {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishLink");
+                    continue;
+                };
+                let payload =
+                    serde_json::to_vec(&ClientEvent::OpenLink(OpenLinkData { url })).unwrap();
+                let res = room
+                    .local_participant()
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish link: {e:?}");
+                }
+            }
             RoomServiceCommand::PublishClickAnimation(point) => {
                 let inner_room = inner.room.lock().await;
                 if inner_room.is_none() {
@@ -2097,6 +2130,13 @@ pub enum ClientEvent {
     DrawClearAllPaths,
     /// Click animation at a point
     ClickAnimation(ClientPoint),
+    /// A link a viewer sends the sharer, for the sharer's browser
+    OpenLink(OpenLinkData),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OpenLinkData {
+    pub url: String,
 }
 
 fn start_remote_camera_stream(
@@ -2475,6 +2515,18 @@ async fn handle_room_events(ctx: RoomEventContext) {
                     }
                     ClientEvent::ClickAnimation(point) => event_loop_proxy
                         .send_event(UserEvent::ClickAnimationFromParticipant(point, identity)),
+                    ClientEvent::OpenLink(data) => {
+                        let sender_name = participants
+                            .read()
+                            .unwrap()
+                            .get(&identity)
+                            .map(|info| info.name().to_string())
+                            .unwrap_or_default();
+                        event_loop_proxy.send_event(UserEvent::LinkFromParticipant {
+                            url: data.url,
+                            sender_name,
+                        })
+                    }
                     ClientEvent::RemoteControlEnabled(data) => {
                         event_loop_proxy.send_event(UserEvent::SharerControlEnabled(data.enabled))
                     }

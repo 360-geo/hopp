@@ -16,7 +16,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant as StdInstant};
 
 use iced::mouse;
-use iced::widget::{canvas, column, container, row, shader, stack, text, Space};
+use iced::widget::{canvas, column, container, row, shader, stack, text, tooltip, Space};
 use iced::{
     alignment, gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Point,
     Radians, Rectangle, Shadow, Size, Vector,
@@ -292,6 +292,9 @@ fn spawn_redraw_thread(
 const SCREENSHARE_STREAM_ID: u64 = u64::MAX;
 
 const ICON_COG: &[u8] = include_bytes!("../../resources/icons/cog.svg");
+const ICON_LINK: &[u8] = include_bytes!("../../resources/icons/link.svg");
+/// How long the "Link sent" note stays next to the link button.
+const LINK_STATUS_DURATION: std::time::Duration = std::time::Duration::from_millis(2500);
 const ICON_PENCIL_SVG: &[u8] = include_bytes!("../../resources/icons/pencil.svg");
 
 /// Icon font codepoints for segmented control (from icons-font).
@@ -339,6 +342,8 @@ pub enum ScreensharingMessage {
     ToggleDropdown,
     DismissDropdown,
     DropdownItemClicked(usize),
+    /// Send the link on the clipboard to the sharer, whose browser opens it.
+    SendLink,
 }
 
 // ── Input events to forward to room service ─────────────────────────────────
@@ -352,18 +357,38 @@ pub(crate) enum ScreenShareTab {
 
 #[derive(Debug)]
 pub(crate) enum ScreenShareInputEvent {
-    CursorMoved { x: f64, y: f64 },
+    CursorMoved {
+        x: f64,
+        y: f64,
+    },
     MouseClick(crate::room_service::MouseClickData),
     Scroll(crate::room_service::WheelDelta),
     KeyInput(crate::room_service::KeystrokeData),
-    DrawStart { x: f64, y: f64, path_id: u64 },
-    DrawAddPoint { x: f64, y: f64 },
-    DrawEnd { x: f64, y: f64 },
+    /// A link for the sharer's browser.
+    SendLink(String),
+    DrawStart {
+        x: f64,
+        y: f64,
+        path_id: u64,
+    },
+    DrawAddPoint {
+        x: f64,
+        y: f64,
+    },
+    DrawEnd {
+        x: f64,
+        y: f64,
+    },
     DrawClearAllPaths,
     DrawClearPaths(Vec<u64>),
-    ClickAnimation { x: f64, y: f64 },
+    ClickAnimation {
+        x: f64,
+        y: f64,
+    },
     DrawingModeChanged(crate::room_service::DrawingMode),
-    AddToClipboard { is_copy: bool },
+    AddToClipboard {
+        is_copy: bool,
+    },
     PasteFromClipboard(Option<String>),
 }
 
@@ -400,6 +425,8 @@ struct ScreensharingState {
     last_click_x: f32,
     last_click_y: f32,
     sharer_name: String,
+    /// What happened to the last link sent, shown next to the link button for a moment.
+    link_status: Option<(&'static str, StdInstant)>,
     /// Modifier key-down events buffered until we know whether they precede a
     /// clipboard shortcut (in which case they are discarded) or a regular key
     /// (in which case they are flushed first).
@@ -428,8 +455,55 @@ impl Default for ScreensharingState {
             last_click_x: 0.0,
             last_click_y: 0.0,
             sharer_name: "Screen".to_string(),
+            link_status: None,
             queued_modifier_events: Vec::new(),
         }
+    }
+}
+
+/// The header button that sends the link on the clipboard to the sharer, with
+/// a short note on the last attempt next to it.
+fn link_button<'a>(
+    sharer_name: &str,
+    status: Option<(&'static str, StdInstant)>,
+) -> iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> {
+    let button = dropdown_trigger_button(ICON_LINK, false, ScreensharingMessage::SendLink);
+    let tip = container(
+        text(format!(
+            "Send the link on your clipboard to {sharer_name}. It opens in their browser."
+        ))
+        .size(12)
+        .color(Color::WHITE),
+    )
+    .padding(Padding::from([4.0, 8.0]))
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(ColorToken::Gray600.to_color())),
+        border: Border {
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    });
+    let button = tooltip(button, tip, tooltip::Position::Bottom)
+        .gap(4)
+        .snap_within_viewport(true);
+
+    let note = status
+        .filter(|(_, at)| at.elapsed() < LINK_STATUS_DURATION)
+        .map(|(note, _)| note);
+    match note {
+        Some(note) => row![
+            text(note)
+                .size(12)
+                .font(GEIST_MEDIUM)
+                .color(ColorToken::Slate300.to_color()),
+            button,
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into(),
+        None => button.into(),
     }
 }
 
@@ -1614,6 +1688,21 @@ impl ScreensharingWindow {
                             self.state.left_mouse_pressed = false;
                             input_events.push(ScreenShareInputEvent::DrawingModeChanged(mode));
                         }
+                        ScreensharingMessage::SendLink => {
+                            let clipboard_text =
+                                self.clipboard.read(Kind::Standard).unwrap_or_default();
+                            match crate::utils::links::shareable_link(&clipboard_text) {
+                                Some(link) => {
+                                    log::info!("ScreensharingWindow: sending a link to the sharer");
+                                    input_events.push(ScreenShareInputEvent::SendLink(link));
+                                    self.state.link_status = Some(("Link sent", StdInstant::now()));
+                                }
+                                None => {
+                                    self.state.link_status =
+                                        Some(("Copy a link first", StdInstant::now()));
+                                }
+                            }
+                        }
                         ScreensharingMessage::DropdownItemClicked(index) => {
                             let permanent = *index == 1;
                             let mode = crate::room_service::DrawingMode::Draw(
@@ -1793,6 +1882,7 @@ impl ScreensharingWindow {
             state.dropdown_open,
             ScreensharingMessage::ToggleDropdown,
         );
+        let link_button = link_button(&state.sharer_name, state.link_status);
 
         let header_content: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
             if show_call_controls {
@@ -1800,6 +1890,7 @@ impl ScreensharingWindow {
                     Space::new().width(Length::Fixed(traffic_light_spacer)),
                     name_label,
                     Space::new().width(Length::Fill),
+                    link_button,
                     cog_button,
                 ]
                 .align_y(Alignment::Center)
@@ -1825,6 +1916,7 @@ impl ScreensharingWindow {
                     Space::new().width(Length::Fixed(traffic_light_spacer)),
                     name_label,
                     Space::new().width(Length::Fill),
+                    link_button,
                     cog_button,
                 ]
                 .align_y(Alignment::Center)
@@ -2094,6 +2186,7 @@ impl ScreensharingWindow {
             ScreensharingMessage::DismissDropdown => {
                 self.state.dropdown_open = false;
             }
+            ScreensharingMessage::SendLink => {}
             ScreensharingMessage::DropdownItemClicked(index) => {
                 match index {
                     0 => self.state.draw_persist = false,

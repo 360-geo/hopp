@@ -146,6 +146,13 @@ pub struct AudioDevice {
     pub default: bool,
 }
 
+/// A web link a viewer sent the sharer.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ReceivedLink {
+    pub url: String,
+    pub sender_name: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioCaptureMessage {
     pub device_name: String,
@@ -232,6 +239,9 @@ pub enum Message {
     /// Turning the camera on first shows the user a private preview, shared
     /// only after they click Share.
     SetWebcamPreview(bool),
+    /// A viewer sent the sharer a web link (core → Hopp), which opens it in
+    /// the browser or copies it, as Settings say.
+    LinkReceived(ReceivedLink),
     StartAudioCapture(AudioCaptureMessage),
     StartAudioCaptureResult(Result<(), String>),
     StopAudioCapture,

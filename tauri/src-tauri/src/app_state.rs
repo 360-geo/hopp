@@ -91,6 +91,10 @@ pub struct UserSettings {
     /// the user clicks Share.
     #[serde(default = "default_true")]
     pub webcam_preview: bool,
+    /// Links a viewer sends while the user shares their screen open in the
+    /// browser; otherwise they're copied to the clipboard.
+    #[serde(default = "default_true")]
+    pub open_received_links: bool,
 }
 
 impl Default for UserSettings {
@@ -118,6 +122,7 @@ impl Default for UserSettings {
             audio_output: None,
             auto_mic_volume: true,
             webcam_preview: true,
+            open_received_links: true,
         }
     }
 }

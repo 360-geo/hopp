@@ -51,6 +51,7 @@ pub mod graphics {
 pub mod utils {
     pub mod clock;
     pub mod geometry;
+    pub mod links;
     pub mod svg_renderer;
 }
 
@@ -2402,6 +2403,34 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 };
                 self.set_call_controls_camera(true, actual_name);
             }
+            UserEvent::LinkFromParticipant { url, sender_name } => {
+                let sharing = self.room_service.as_ref().is_some_and(|room_service| {
+                    room_service
+                        .participants()
+                        .read()
+                        .unwrap()
+                        .get("local")
+                        .is_some_and(|info| info.is_screensharing())
+                });
+                match utils::links::shareable_link(&url) {
+                    Some(url) if sharing => {
+                        log::info!("user_event: link from {sender_name}");
+                        if let Err(e) =
+                            self.socket
+                                .send(Message::LinkReceived(socket_lib::ReceivedLink {
+                                    url,
+                                    sender_name,
+                                }))
+                        {
+                            error!("user_event: Error sending LinkReceived: {e:?}");
+                        }
+                    }
+                    Some(_) => log::info!("user_event: ignoring a link, not sharing"),
+                    None => log::warn!(
+                        "user_event: ignoring a link that isn't http(s) from {sender_name}"
+                    ),
+                }
+            }
             UserEvent::SetWebcamPreview(enabled) => {
                 log::info!("user_event: SetWebcamPreview({enabled})");
                 self.webcam_preview_enabled = enabled;
@@ -2942,6 +2971,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                     );
                                 }
                             },
+                            ScreenShareInputEvent::SendLink(url) => rs.publish_link(url),
                             ScreenShareInputEvent::DrawingModeChanged(mode) => {
                                 if mode == crate::room_service::DrawingMode::Disabled
                                     || mode == crate::room_service::DrawingMode::ClickAnimation
@@ -3389,6 +3419,11 @@ pub enum UserEvent {
     SetWebcamPreview(bool),
     /// Share the camera after its private preview.
     CameraPreviewShare,
+    /// A viewer sent the sharer a link to open.
+    LinkFromParticipant {
+        url: String,
+        sender_name: String,
+    },
     /// The capture thread asks to move the microphone's input volume by this many dB.
     AdjustMicVolume(f32),
     DefaultInputDeviceChanged,
