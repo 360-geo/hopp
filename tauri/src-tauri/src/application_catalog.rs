@@ -69,6 +69,16 @@ fn application_paths() -> Vec<PathBuf> {
     let mut applications = vec![PathBuf::from(
         "/System/Library/CoreServices/NotificationCenter.app",
     )];
+    applications.extend(app_bundles_in(roots));
+    applications
+}
+
+/// The `.app` bundles in `roots` and their subfolders. Follows a symlink only
+/// when it is itself an app: Safari in /Applications is a symlink into the
+/// system's Cryptex volume. Symlinked folders are skipped, so links can't loop.
+#[cfg(target_os = "macos")]
+fn app_bundles_in(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut applications = Vec::new();
     let mut pending = roots;
     while let Some(directory) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(directory) else {
@@ -78,11 +88,13 @@ fn application_paths() -> Vec<PathBuf> {
             let Ok(file_type) = entry.file_type() else {
                 continue;
             };
-            if file_type.is_symlink() {
-                continue;
-            }
             let path = entry.path();
-            if path.extension().is_some_and(|extension| extension == "app") {
+            let is_app = path.extension().is_some_and(|extension| extension == "app");
+            if file_type.is_symlink() {
+                if is_app && path.is_dir() {
+                    applications.push(path);
+                }
+            } else if is_app {
                 applications.push(path);
             } else if file_type.is_dir() {
                 pending.push(path);
@@ -90,6 +102,34 @@ fn application_paths() -> Vec<PathBuf> {
         }
     }
     applications
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_symlinked_apps_without_following_symlinked_folders() {
+        let root = std::env::temp_dir().join(format!("hopp-app-catalog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let system = root.join("System");
+        let applications = root.join("Applications");
+        std::fs::create_dir_all(system.join("Safari.app")).unwrap();
+        std::fs::create_dir_all(applications.join("Utilities/Terminal.app")).unwrap();
+        std::fs::create_dir_all(applications.join("Firefox.app")).unwrap();
+        std::os::unix::fs::symlink(system.join("Safari.app"), applications.join("Safari.app"))
+            .unwrap();
+        std::os::unix::fs::symlink(&root, applications.join("Loop")).unwrap();
+
+        let mut names = app_bundles_in(vec![applications])
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(names, ["Firefox.app", "Safari.app", "Terminal.app"]);
+    }
 }
 
 #[cfg(target_os = "macos")]
