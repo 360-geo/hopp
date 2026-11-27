@@ -56,6 +56,8 @@ pub(crate) mod window {
     pub(crate) mod aspect_ratio;
     pub(crate) mod camera_window;
     pub(crate) mod drawing_helpers;
+    #[cfg(target_os = "macos")]
+    pub(crate) mod drawing_status_item;
     pub(crate) mod drawing_window;
     pub(crate) mod screensharing_window;
     pub(crate) mod stats_window;
@@ -414,6 +416,9 @@ pub struct Application<'a> {
     camera_window: Option<CameraWindow>,
     screensharing_window: Option<ScreensharingWindow>,
     drawing_window: Option<DrawingWindow>,
+    /// Menu bar pen icon, present while the screen is shared.
+    #[cfg(target_os = "macos")]
+    drawing_status_item: Option<window::drawing_status_item::DrawingStatusItem>,
     stats_window: Option<StatsWindow>,
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
@@ -504,6 +509,8 @@ impl<'a> Application<'a> {
             camera_window: None,
             screensharing_window: None,
             drawing_window: None,
+            #[cfg(target_os = "macos")]
+            drawing_status_item: None,
             stats_window: None,
             hang_protection_counter,
             start_camera_on_call: false,
@@ -840,7 +847,22 @@ impl<'a> Application<'a> {
         }
 
         self.set_screensharing_active(true);
+        self.show_drawing_status_item(true);
         Ok(())
+    }
+
+    /// The menu bar pen icon, shown only while this user shares their screen.
+    fn show_drawing_status_item(&mut self, show: bool) {
+        #[cfg(target_os = "macos")]
+        {
+            self.drawing_status_item = if show {
+                window::drawing_status_item::DrawingStatusItem::new(self.event_loop_proxy.clone())
+            } else {
+                None
+            };
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = show;
     }
 
     fn stop_camera(&mut self) {
@@ -983,6 +1005,11 @@ impl<'a> Application<'a> {
         if let Some(window) = &mut self.screensharing_window {
             window.hide();
             window.stop_redraw_thread();
+            if let Err(e) = self.socket.send(Message::ScreenShareWindowShown(false)) {
+                log::error!(
+                    "close_screensharing_window: Error sending ScreenShareWindowShown: {e:?}"
+                );
+            }
         }
     }
 
@@ -991,6 +1018,7 @@ impl<'a> Application<'a> {
         if let Some(window) = &mut self.drawing_window {
             window.hide();
         }
+        self.set_drawing_status_item(false);
         if let Err(e) = self.socket.send(Message::DrawingDisabled) {
             log::error!("Failed to send DrawingDisabled: {e:?}");
         }
@@ -1008,6 +1036,15 @@ impl<'a> Application<'a> {
                 }
             }
         }
+    }
+
+    fn set_drawing_status_item(&self, drawing: bool) {
+        #[cfg(target_os = "macos")]
+        if let Some(item) = &self.drawing_status_item {
+            item.set_drawing(drawing);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = drawing;
     }
 
     fn stop_screenshare(&mut self) {
@@ -1034,6 +1071,7 @@ impl<'a> Application<'a> {
         self.destroy_overlay_window();
         self.set_screensharing_active(false);
         self.close_drawing_window();
+        self.show_drawing_status_item(false);
     }
 
     fn set_screensharing_active(&mut self, active: bool) {
@@ -2415,6 +2453,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
                 self.set_screensharing_active(true);
+                if self.screensharing_window.is_some() {
+                    if let Err(e) = self.socket.send(Message::ScreenShareWindowShown(true)) {
+                        log::error!("user_event: Error sending ScreenShareWindowShown: {e:?}");
+                    }
+                }
             }
             UserEvent::CloseScreenShareWindow => {
                 log::info!("user_event: CloseScreenShareWindow");
@@ -2436,6 +2479,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::BringWindowsToFront => {
                 log::info!("user_event: BringWindowsToFront");
+                // Hopp was activated (Cmd+Tab, Dock) and yielded to us; a
+                // background process can't focus its windows without this.
+                #[cfg(target_os = "macos")]
+                if let Some(main_thread) = objc2::MainThreadMarker::new() {
+                    window::drawing_status_item::activate_app(main_thread);
+                }
                 let mut focused = false;
                 if let Some(screen_sharing_window) = &mut self.screensharing_window {
                     if screen_sharing_window.is_visible() {
@@ -2523,6 +2572,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none local drawing enabled");
+                    // Tell Hopp drawing is off, so its toggle doesn't drift.
+                    self.close_drawing_window();
                     return;
                 }
 
@@ -2553,6 +2604,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .and_then(|wm| wm.active_window_position());
                         win.set_draw_persist(drawing_enabled.permanent);
                         win.show(overlay_position, capture_frame);
+                        self.set_drawing_status_item(true);
                         log::info!(
                             "Local drawing mode enabled (permanent: {})",
                             drawing_enabled.permanent
@@ -2572,6 +2624,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         ) {
                             Ok(win) => {
                                 self.drawing_window = Some(win);
+                                self.set_drawing_status_item(true);
                                 log::info!(
                                     "Local drawing mode enabled (permanent: {})",
                                     drawing_enabled.permanent
@@ -2588,6 +2641,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                     room_service
                                         .publish_drawing_mode(room_service::DrawingMode::Disabled);
                                 }
+                                self.close_drawing_window();
                             }
                         }
                     }
@@ -2618,6 +2672,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                     // Hide drawing window
                     self.close_drawing_window();
+                }
+            }
+            UserEvent::DrawingStatusItemClicked => {
+                if let Err(e) = self.socket.send(Message::DrawingToggleRequested) {
+                    log::error!("user_event: Error sending DrawingToggleRequested: {e:?}");
                 }
             }
             UserEvent::ExitRequested => {
@@ -3211,6 +3270,8 @@ pub enum UserEvent {
     DrawClearAllPaths(String),
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
     LocalDrawingEnabled(socket_lib::DrawingEnabled),
+    /// The menu bar pen icon was clicked; Hopp decides the new state.
+    DrawingStatusItemClicked,
     SharerDrawPersistChanged(bool),
     ControllerDrawPersistChanged(bool),
     LastModeChanged(socket_lib::StoredMode),

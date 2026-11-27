@@ -75,6 +75,9 @@ impl AppActivationObserver {
                         );
                     } else {
                         bringing_to_front.store(true, Ordering::Relaxed);
+                        // The windows to focus live in the core process; let it
+                        // take over as the active app.
+                        crate::yield_activation_to_core();
                         let data = app_handle.state::<Mutex<AppData>>();
                         let data = data.lock().unwrap();
                         if let Err(e) = data.sender.send(Message::BringWindowsToFront) {

@@ -405,6 +405,28 @@ pub fn get_log_level() -> LevelFilter {
 
 /// Centers the window relative to the tray icon position with multi-monitor support.
 #[cfg(target_os = "macos")]
+/// When the menu bar window last hid itself on losing focus. Clicking the menu
+/// bar icon takes focus from the window before the click itself arrives, so
+/// without this the click that should close the window reopened it.
+static MAIN_WINDOW_HIDDEN_ON_BLUR: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// Longer than a click: the window hides on mouse down, the click comes on mouse up.
+const CLICK_AFTER_BLUR_HIDE: Duration = Duration::from_millis(500);
+
+pub fn note_main_window_hidden_on_blur() {
+    if let Ok(mut hidden_at) = MAIN_WINDOW_HIDDEN_ON_BLUR.lock() {
+        *hidden_at = Some(std::time::Instant::now());
+    }
+}
+
+fn main_window_just_hidden_on_blur() -> bool {
+    MAIN_WINDOW_HIDDEN_ON_BLUR
+        .lock()
+        .ok()
+        .and_then(|mut hidden_at| hidden_at.take())
+        .is_some_and(|hidden_at| hidden_at.elapsed() < CLICK_AFTER_BLUR_HIDE)
+}
+
 pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: bool) {
     log::info!("center_window_on_tray: tray_rect: {tray_rect:?}, show_window: {show_window:?}");
 
@@ -504,6 +526,10 @@ pub fn setup_tray_icon(
         let location_set_clone = location_set.clone();
         let app_handle = app.handle().clone();
 
+        if let Some(window) = app_handle.get_webview_window("main") {
+            show_window_over_fullscreen_apps(&window);
+        }
+
         // Use dark icon as template - macOS will automatically invert for dark menu bars
         let mut builder = TrayIconBuilder::new()
             .menu(menu)
@@ -539,6 +565,11 @@ pub fn setup_tray_icon(
                         match window.is_visible() {
                             Ok(true) => {
                                 let _ = window.hide();
+                            }
+                            Ok(false) if main_window_just_hidden_on_blur() => {
+                                log::info!(
+                                    "setup_tray_icon: window was just hidden by this click, keeping it closed"
+                                );
                             }
                             Ok(false) => {
                                 if let Ok(mut location_set) = location_set.lock() {
@@ -718,6 +749,63 @@ pub fn set_window_corner_radius_and_decorations(
     if let Some(layer) = ns_view.layer() {
         layer.setCornerRadius(radius);
         layer.setMasksToBounds(true);
+    }
+}
+
+/// Lets the menu bar window open on top of a fullscreen app. Without this,
+/// macOS keeps it on a regular desktop, so a tray click while a fullscreen
+/// app is in front shows nothing.
+#[cfg(target_os = "macos")]
+pub fn show_window_over_fullscreen_apps(window: &tauri::WebviewWindow) {
+    use objc2_app_kit::NSWindowCollectionBehavior;
+
+    let ns_window: &objc2_app_kit::NSWindow = match window.ns_window() {
+        Ok(ns_window) => unsafe { &*ns_window.cast() },
+        Err(e) => {
+            log::error!("show_window_over_fullscreen_apps: Failed to get NSWindow: {e:?}");
+            return;
+        }
+    };
+
+    let behavior = ns_window.collectionBehavior()
+        | NSWindowCollectionBehavior::CanJoinAllSpaces
+        | NSWindowCollectionBehavior::FullScreenAuxiliary;
+    ns_window.setCollectionBehavior(behavior);
+}
+
+/// Lets the core process become the active app (macOS 14+): Hopp is active
+/// after a click in its window, and macOS no longer lets a background process
+/// take activation on its own.
+#[cfg(target_os = "macos")]
+pub fn yield_activation_to_core() {
+    use objc2::{msg_send, sel, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSWorkspace};
+    use objc2_foundation::NSObjectProtocol;
+
+    let Some(main_thread) = MainThreadMarker::new() else {
+        log::error!("yield_activation_to_core: not on the main thread");
+        return;
+    };
+    let app = NSApplication::sharedApplication(main_thread);
+    if !app.respondsToSelector(sel!(yieldActivationToApplication:)) {
+        return;
+    }
+    let own_pid = std::process::id() as i32;
+    let core = NSWorkspace::sharedWorkspace()
+        .runningApplications()
+        .iter()
+        .find(|running| {
+            running.processIdentifier() != own_pid
+                && running
+                    .executableURL()
+                    .and_then(|url| url.lastPathComponent())
+                    .is_some_and(|name| name.to_string().starts_with("hopp_core"))
+        });
+    match core {
+        Some(core) => {
+            let _: () = unsafe { msg_send![&app, yieldActivationToApplication: &*core] };
+        }
+        None => log::warn!("yield_activation_to_core: core process not found"),
     }
 }
 

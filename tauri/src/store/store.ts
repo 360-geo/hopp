@@ -7,6 +7,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { TCallTokensMessage } from "@/payloads";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { CoreParticipantState, CoreRoleEvent } from "@/core_payloads";
+import { sounds } from "@/constants/sounds";
 
 const windowName = getCurrentWindow().label;
 
@@ -29,6 +30,11 @@ export type CallState = {
   room?: components["schemas"]["Room"];
   isReconnecting?: boolean;
   isInitialisingCall?: boolean;
+  /**
+   * In a 1:1 call, the other person's user id until their connection is up.
+   * The call counts as started only then: one sound, and the menu bar window closes.
+   */
+  connectingTo?: string;
   participants: CoreParticipantState[];
   micLevel: number;
 } & TCallTokensMessage["payload"];
@@ -280,6 +286,18 @@ listen("get-store", () => {
   });
 });
 
+/** User ids of the remote participants. Identities look like `room:<room>:<userId>:audio`. */
+export function remoteUserIds(participants: CoreParticipantState[]): Set<string> {
+  return new Set(
+    participants
+      .filter((p) => !p.identity.includes("local"))
+      .map((p) => {
+        const parts = p.identity.split(":");
+        return parts.length >= 4 ? (parts[2] ?? p.identity) : p.identity;
+      }),
+  );
+}
+
 // Listen for full participant snapshot from core and replace the participants array.
 // Also derive local audio/camera state so the UI stays in sync when toggled from core
 // (e.g. camera window mute button).
@@ -292,6 +310,19 @@ listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
   if (!callTokens) return;
 
   const updates: Partial<CallState> = { participants: event.payload, isInitialisingCall: false };
+
+  const before = remoteUserIds(callTokens.participants);
+  const after = remoteUserIds(event.payload);
+  const someoneJoined = [...after].some((id) => !before.has(id));
+  if (callTokens.connectingTo && after.has(callTokens.connectingTo)) {
+    updates.connectingTo = undefined;
+    updates.timeStarted = new Date();
+    sounds.callAccepted.play();
+    invoke("hide_main_window");
+  } else if (someoneJoined && callTokens.participants.length > 0) {
+    // Not on the first snapshot, which lists whoever was already in the room.
+    sounds.callAccepted.play();
+  }
 
   if (user) {
     const localParticipant = event.payload.find((p) => p.identity.includes("local"));

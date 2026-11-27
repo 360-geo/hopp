@@ -685,6 +685,12 @@ impl ScreensharingWindow {
         let window = Arc::new(window);
         // Bring to front when window is created
         window.focus_window();
+        // The cursor is set by hand (pen, pointer, arrow). winit's cursor rect
+        // would reset it to an arrow, so the pen flickered while moving.
+        #[cfg(target_os = "macos")]
+        if let Some(ns_window) = crate::window::drawing_window::ns_window(&window) {
+            ns_window.disableCursorRects();
+        }
 
         // ── wgpu setup ───────────────────────────────────────────────────
         let surface_info = context_manager
@@ -1146,9 +1152,9 @@ impl ScreensharingWindow {
                     && logical_y < rect.y + rect.height;
                 let was_inside = self.mouse_in_participant_area;
                 self.mouse_in_participant_area = inside;
-                if was_inside != inside {
-                    self.update_cursor();
-                }
+                // On every move, not only on entering: macOS can reset the
+                // cursor in between, which made the pen flicker.
+                self.update_cursor();
                 if inside {
                     let pct_x = ((logical_x - rect.x) / rect.width) as f64;
                     let pct_y = ((logical_y - rect.y) / rect.height) as f64;

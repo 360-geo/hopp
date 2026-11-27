@@ -26,7 +26,10 @@ use hopp::{
 };
 mod shortcuts;
 #[cfg(target_os = "macos")]
-use hopp::{disable_app_nap, set_window_corner_radius_and_decorations, CORNER_RADIUS};
+use hopp::{
+    disable_app_nap, set_window_corner_radius_and_decorations, yield_activation_to_core,
+    CORNER_RADIUS,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::{env, sync::Arc};
@@ -359,17 +362,27 @@ fn get_sharer_draw_persist(app: tauri::AppHandle) -> bool {
     value
 }
 
+/// The Settings option "Keep drawings until right-click": whether lines stay
+/// until right-click or fade, both when drawing on your own shared screen and
+/// on a teammate's.
 #[tauri::command(async)]
-fn set_sharer_draw_persist(app: tauri::AppHandle, persist: bool) {
-    log::info!("set_sharer_draw_persist: {persist}");
+fn set_draw_persist(app: tauri::AppHandle, persist: bool) {
+    log::info!("set_draw_persist: {persist}");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state.set_sharer_draw_persist(persist);
+    data.app_state.set_controller_draw_persist(persist);
 
     if data.drawing_enabled {
         if let Err(e) = data.sender.send(Message::SharerDrawPersistChanged(persist)) {
-            log::error!("set_sharer_draw_persist: failed to send message: {e:?}");
+            log::error!("set_draw_persist: failed to send SharerDrawPersistChanged: {e:?}");
         }
+    }
+    if let Err(e) = data
+        .sender
+        .send(Message::ControllerDrawPersistChanged(persist))
+    {
+        log::error!("set_draw_persist: failed to send ControllerDrawPersistChanged: {e:?}");
     }
 }
 
@@ -401,12 +414,32 @@ fn get_drawing_enabled(app: tauri::AppHandle) -> bool {
 
 #[tauri::command(async)]
 fn set_drawing_enabled(app: tauri::AppHandle, enabled: bool, permanent: bool) {
+    apply_drawing_enabled(&app, enabled, permanent);
+}
+
+/// Turns the sharer's drawing on or off. Used by the call window's pen button
+/// and the core's menu bar pen icon; tells the frontend through
+/// `drawing_enabled_changed`.
+fn apply_drawing_enabled(app: &tauri::AppHandle, enabled: bool, permanent: bool) {
     log::info!("set_drawing_enabled: enabled={enabled} permanent={permanent}");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
 
     if data.drawing_enabled == enabled {
         return;
+    }
+
+    if enabled {
+        if let Some(window) = app.get_webview_window("main") {
+            #[cfg(target_os = "macos")]
+            let _ = window.hide();
+            #[cfg(target_os = "windows")]
+            let _ = window.minimize();
+        }
+        // The drawing window lives in the core process; let it take over as
+        // the active app so it gets the mouse and shows the pen cursor.
+        #[cfg(target_os = "macos")]
+        let _ = app.run_on_main_thread(yield_activation_to_core);
     }
 
     if let Err(e) = data
@@ -420,15 +453,12 @@ fn set_drawing_enabled(app: tauri::AppHandle, enabled: bool, permanent: bool) {
     data.drawing_enabled = enabled;
     drop(data);
 
+    #[cfg(not(target_os = "macos"))]
     if let Some(window) = app.get_webview_window("main") {
-        #[cfg(not(target_os = "macos"))]
         let _ = window.set_always_on_top(enabled);
-        if enabled {
-            #[cfg(target_os = "macos")]
-            let _ = window.hide();
-            #[cfg(target_os = "windows")]
-            let _ = window.minimize();
-        }
+    }
+    if let Err(e) = app.emit("drawing_enabled_changed", enabled) {
+        log::error!("set_drawing_enabled: failed to emit drawing_enabled_changed: {e:?}");
     }
 }
 
@@ -454,6 +484,21 @@ fn minimize_main_window(app: tauri::AppHandle) {
     } else {
         log::error!("Main window not found");
     }
+}
+
+/// Hides the menu bar window once a 1:1 call is connected. Only on macOS,
+/// where the main window is a menu bar popup; elsewhere it is the app window.
+#[tauri::command(async)]
+fn hide_main_window(app: tauri::AppHandle) {
+    log::info!("hide_main_window");
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(e) = window.hide() {
+            log::error!("Failed to hide main window: {e:?}");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 #[tauri::command(async)]
@@ -502,13 +547,6 @@ fn call_started(
     #[allow(unused_mut)]
     let mut data = data.lock().unwrap();
     let user_settings = data.app_state.user_settings();
-    #[cfg(target_os = "macos")]
-    {
-        if user_settings.show_dock_icon_in_call {
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-            data.activation_policy_regular = true;
-        }
-    }
     // An empty name makes the core capture from the system default input and
     // follow it when it changes. Otherwise resolve preferred → last used →
     // system default → first → "".
@@ -1086,6 +1124,93 @@ fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
     }
 }
 
+/// Turns Hopp back into a menu bar app (no Dock icon) after a call.
+///
+/// macOS takes focus away from the window during that switch, so hiding on
+/// focus loss is paused for 300 ms to keep the window open. If the window had
+/// focus before, it gets it back afterwards: a window that is already unfocused
+/// can't lose focus again, so clicking elsewhere would no longer hide it.
+///
+/// Call without holding the `AppData` lock: window queries wait on the main thread.
+#[cfg(target_os = "macos")]
+fn return_to_menu_bar_mode(app: &tauri::AppHandle, suppress_hide: Arc<AtomicBool>) {
+    let main_window = app.get_webview_window("main");
+    let had_focus = main_window
+        .as_ref()
+        .is_some_and(|window| window.is_focused().unwrap_or(false));
+    suppress_hide.store(true, Ordering::Relaxed);
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        suppress_hide.store(false, Ordering::Relaxed);
+        let Some(window) = main_window.filter(|_| had_focus) else {
+            return;
+        };
+        if window.is_visible().unwrap_or(false) && !window.is_focused().unwrap_or(true) {
+            log::info!("return_to_menu_bar_mode: giving the main window its focus back");
+            let _ = window.set_focus();
+        }
+    });
+}
+
+/// Hopp lives in the menu bar, so Cmd+Q closes the window in front instead of
+/// quitting. The main window hides, as when clicking outside it.
+#[cfg(target_os = "macos")]
+fn close_focused_window(app: &tauri::AppHandle) {
+    let focused = app
+        .webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false));
+    match focused {
+        Some(window) if window.label() == "main" => {
+            let _ = window.hide();
+        }
+        Some(window) => {
+            let _ = window.close();
+        }
+        None => {}
+    }
+}
+
+/// macOS app menu: the standard items, with Cmd+Q bound to closing the front
+/// window (see `close_focused_window`) and Quit kept without a shortcut. The
+/// Edit menu keeps copy/paste working in text fields.
+#[cfg(target_os = "macos")]
+fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::SubmenuBuilder;
+
+    let close_window = MenuItemBuilder::with_id(CLOSE_WINDOW_MENU_ID, "Close Window")
+        .accelerator("Cmd+Q")
+        .build(app)?;
+    // Same id as the tray menu's Quit, whose handler exits the app.
+    let quit = MenuItemBuilder::with_id("quit", "Quit Hopp").build(app)?;
+    let app_menu = SubmenuBuilder::new(app, "Hopp")
+        .about(None)
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .item(&close_window)
+        .item(&quit)
+        .build()?;
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    MenuBuilder::new(app)
+        .items(&[&app_menu, &edit_menu])
+        .build()
+}
+
+#[cfg(target_os = "macos")]
+const CLOSE_WINDOW_MENU_ID: &str = "close_window";
+
 #[tauri::command(async)]
 fn end_call(app: tauri::AppHandle) {
     let state = app.state::<Mutex<AppData>>();
@@ -1100,14 +1225,10 @@ fn end_call(app: tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     {
         data.sleep_prevention.disable();
-        let suppress = data.suppress_hide_on_call_end.clone();
-        suppress.store(true, Ordering::Relaxed);
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
         data.activation_policy_regular = false;
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            suppress.store(false, Ordering::Relaxed);
-        });
+        let suppress = data.suppress_hide_on_call_end.clone();
+        drop(data);
+        return_to_menu_bar_mode(&app, suppress);
     }
     shortcuts::unregister_call_shortcuts(&app);
 }
@@ -1164,22 +1285,38 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 data.is_screensharing = false;
                 #[cfg(target_os = "macos")]
                 {
-                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                     data.sleep_prevention.disable();
                     data.activation_policy_regular = false;
                     let suppress = data.suppress_hide_on_call_end.clone();
                     drop(data);
-                    suppress.store(true, Ordering::Relaxed);
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                        suppress.store(false, Ordering::Relaxed);
-                    });
+                    return_to_menu_bar_mode(&app, suppress);
                 }
                 #[cfg(not(target_os = "macos"))]
                 drop(data);
                 shortcuts::unregister_call_shortcuts(&app);
                 if let Err(e) = app.emit("core_call_ended", &()) {
                     log::error!("forward_core_events: failed to emit call ended: {e:?}");
+                }
+            }
+            Message::ScreenShareWindowShown(shown) => {
+                log::info!("forward_core_events: screen share window shown: {shown}");
+                // The Dock icon (and Cmd+Tab) is there only while a teammate's
+                // screen is on view, the one Hopp window it can bring forward.
+                #[cfg(target_os = "macos")]
+                {
+                    let data = app.state::<Mutex<AppData>>();
+                    let mut data = data.lock().unwrap();
+                    let show_dock_icon = data.app_state.user_settings().show_dock_icon_in_call;
+                    if shown && show_dock_icon && !data.activation_policy_regular {
+                        data.activation_policy_regular = true;
+                        drop(data);
+                        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+                    } else if !shown && data.activation_policy_regular {
+                        data.activation_policy_regular = false;
+                        let suppress = data.suppress_hide_on_call_end.clone();
+                        drop(data);
+                        return_to_menu_bar_mode(&app, suppress);
+                    }
                 }
             }
             Message::ControllerDrawPersistChanged(persist) => {
@@ -1254,6 +1391,15 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
             }
             Message::StartScreenShareResult(Ok(())) => {
                 log::info!("forward_core_events: screen share started");
+            }
+            Message::DrawingToggleRequested => {
+                let (enabled, permanent) = {
+                    let data = app.state::<Mutex<AppData>>();
+                    let data = data.lock().unwrap();
+                    (data.drawing_enabled, data.app_state.sharer_draw_persist())
+                };
+                log::info!("forward_core_events: menu bar pen clicked (drawing was {enabled})");
+                apply_drawing_enabled(&app, !enabled, permanent);
             }
             Message::DrawingDisabled => {
                 log::info!("forward_core_events: drawing disabled");
@@ -1459,13 +1605,20 @@ fn main() {
                 sentry_utils::upload_latest_crash();
             });
 
-            let quit = MenuItemBuilder::new("Quit")
-                .id("quit")
-                .accelerator("Cmd+Q")
-                .build(app)?;
+            let quit = MenuItemBuilder::new("Quit").id("quit").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&quit]).build()?;
 
             setup_tray_icon(app, &menu, location_set_setup.clone(), tray_clicked.clone())?;
+
+            #[cfg(target_os = "macos")]
+            {
+                app.set_menu(build_app_menu(app.handle())?)?;
+                app.on_menu_event(|app, event| {
+                    if event.id.as_ref() == CLOSE_WINDOW_MENU_ID {
+                        close_focused_window(app);
+                    }
+                });
+            }
 
             /* Clear app logs in the beginning of a session. */
             let dir = app.path().app_log_dir();
@@ -1684,7 +1837,10 @@ fn main() {
                     log::info!("Hiding main window on focus lost: {}", *reopen_requested);
 
                     #[cfg(target_os = "macos")]
-                    window.hide().unwrap();
+                    {
+                        window.hide().unwrap();
+                        hopp::note_main_window_hidden_on_blur();
+                    }
                 }
             }
         })
@@ -1713,12 +1869,13 @@ fn main() {
             set_last_used_camera,
             get_last_used_camera,
             get_sharer_draw_persist,
-            set_sharer_draw_persist,
+            set_draw_persist,
             get_drawing_hint_shown,
             set_drawing_hint_shown,
             get_drawing_enabled,
             set_drawing_enabled,
             minimize_main_window,
+            hide_main_window,
             set_livekit_url,
             get_livekit_url,
             get_camera_permission,

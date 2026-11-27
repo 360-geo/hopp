@@ -155,6 +155,7 @@ export interface CommandMap {
   set_deactivate_hiding: { args: { deactivate: boolean }; return: void };
   set_controller_cursor: { args: { enabled: boolean }; return: void };
   minimize_main_window: { args: void; return: void };
+  hide_main_window: { args: void; return: void };
   quit_app: { args: void; return: void };
 
   set_tray_notification: { args: { enabled: boolean }; return: void };
@@ -177,7 +178,8 @@ export interface CommandMap {
   get_last_used_camera: { args: void; return: string | null };
   set_last_used_camera: { args: { camera: string }; return: void };
   get_sharer_draw_persist: { args: void; return: boolean };
-  set_sharer_draw_persist: { args: { persist: boolean }; return: void };
+  /** Keep drawings until right-click, for both sharer and controller. */
+  set_draw_persist: { args: { persist: boolean }; return: void };
   get_controller_draw_persist: { args: void; return: boolean };
   set_controller_draw_persist: { args: { persist: boolean }; return: void };
   get_drawing_hint_shown: { args: void; return: boolean };

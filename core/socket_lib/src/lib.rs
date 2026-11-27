@@ -256,6 +256,12 @@ pub enum Message {
     ActiveMicChanged(String),
     ActiveCameraChanged(String),
     DrawingDisabled,
+    /// The sharer clicked the menu bar pen icon (core → Hopp). Hopp answers
+    /// with `DrawingEnabled`, which toggles drawing.
+    DrawingToggleRequested,
+    /// The window showing a teammate's shared screen opened or closed
+    /// (core → Hopp), which shows the Dock icon only while it's open.
+    ScreenShareWindowShown(bool),
     ExitRequested,
     SetNoiseCancellation(bool),
     SetScreenShareResolution(ScreenShareResolution),

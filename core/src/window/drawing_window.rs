@@ -233,23 +233,18 @@ impl DrawingWindow {
         })?;
         let window = Arc::new(window);
 
-        window.set_maximized(true);
-        window.focus_window();
+        fill_monitor(&window, position);
 
         #[cfg(target_os = "macos")]
-        {
-            use objc2::rc::Retained;
-            use objc2_app_kit::NSView;
-            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            if let Ok(raw_handle) = window.window_handle() {
-                if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
-                    let ns_view: Option<Retained<NSView>> =
-                        unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
-                    if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
-                        ns_window.disableCursorRects();
-                    }
-                }
-            }
+        if let Some(ns_window) = ns_window(&window) {
+            use objc2_app_kit::NSWindowCollectionBehavior;
+            ns_window.disableCursorRects();
+            // Like the overlay: also show on top of a fullscreen app's Space.
+            ns_window.setCollectionBehavior(
+                ns_window.collectionBehavior()
+                    | NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
+            );
         }
 
         let surface_info =
@@ -353,6 +348,7 @@ impl DrawingWindow {
             #[cfg(not(target_os = "macos"))]
             custom_cursor_pencil,
         };
+        s.take_mouse();
         s.update_draw_y_transform();
         Ok(s)
     }
@@ -386,10 +382,7 @@ impl DrawingWindow {
         capture_frame: Option<Arc<Mutex<Frame>>>,
     ) {
         self.capture_frame = capture_frame;
-        if let Some(pos) = position {
-            self.window.set_outer_position(pos);
-        }
-        self.window.set_maximized(true);
+        fill_monitor(&self.window, position);
 
         self.left_mouse_pressed = false;
         self.current_path_id = 0;
@@ -410,15 +403,34 @@ impl DrawingWindow {
 
         self.cache = Some(Cache::default());
         self.window.set_visible(true);
-        self.window.focus_window();
+        self.take_mouse();
         self.update_draw_y_transform();
         self.window.request_redraw();
     }
 
+    /// Makes the core the active app with this window in front, so it gets the
+    /// clicks and macOS shows the pen cursor. The core is a background process,
+    /// and macOS ignores the cursor set by an app that isn't active, so without
+    /// this the pen often stayed an arrow until the window was toggled again.
+    fn take_mouse(&self) {
+        #[cfg(target_os = "macos")]
+        {
+            // macOS 14+ `activate` takes the activation the Hopp app or the
+            // menu bar click handed us; winit's focus_window can't force it.
+            if let Some(main_thread) = objc2::MainThreadMarker::new() {
+                crate::window::drawing_status_item::activate_app(main_thread);
+            }
+            if let Some(ns_window) = ns_window(&self.window) {
+                ns_window.setIgnoresMouseEvents(false);
+            }
+        }
+        self.window.focus_window();
+        self.set_pencil_cursor();
+    }
+
     pub fn move_to(&mut self, position: Option<LogicalPosition<f64>>) {
-        if let Some(position) = position {
-            self.window.set_outer_position(position);
-            self.window.set_maximized(true);
+        if position.is_some() {
+            fill_monitor(&self.window, position);
             self.update_draw_y_transform();
             self.window.request_redraw();
         }
@@ -585,6 +597,7 @@ impl DrawingWindow {
 
         match &event {
             WindowEvent::CursorMoved { position, .. } => {
+                self.set_pencil_cursor();
                 let local = position.to_logical(self.window.scale_factor());
                 if let Some(source) = self.source_position(Position {
                     x: local.x,
@@ -846,4 +859,48 @@ impl Drop for DrawingWindow {
     fn drop(&mut self) {
         self.stop_redraw_thread();
     }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn ns_window(window: &Window) -> Option<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
+    use objc2::rc::Retained;
+    use objc2_app_kit::NSView;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let raw_handle = window.window_handle().ok()?;
+    let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() else {
+        return None;
+    };
+    let ns_view: Option<Retained<NSView>> =
+        unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
+    ns_view.and_then(|view| view.window())
+}
+
+/// Covers the whole monitor at `position` (a monitor origin), or the current
+/// one. Not `set_maximized`: on this borderless window macOS zoom toggles, so
+/// every other re-show shrank back to the 1×1 start size, which got no mouse
+/// events and no pen cursor.
+fn fill_monitor(window: &Window, position: Option<LogicalPosition<f64>>) {
+    let monitor = position
+        .and_then(|origin| {
+            window.available_monitors().find(|monitor| {
+                let scale = monitor.scale_factor();
+                let monitor_origin = monitor.position().to_logical::<f64>(scale);
+                let monitor_size = monitor.size().to_logical::<f64>(scale);
+                origin.x >= monitor_origin.x
+                    && origin.x < monitor_origin.x + monitor_size.width
+                    && origin.y >= monitor_origin.y
+                    && origin.y < monitor_origin.y + monitor_size.height
+            })
+        })
+        .or_else(|| window.current_monitor());
+    let Some(monitor) = monitor else {
+        log::warn!("DrawingWindow: no monitor found, maximizing instead");
+        if let Some(origin) = position {
+            window.set_outer_position(origin);
+        }
+        window.set_maximized(true);
+        return;
+    };
+    window.set_outer_position(monitor.position());
+    let _ = window.request_inner_size(monitor.size());
 }

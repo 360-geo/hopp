@@ -286,11 +286,11 @@ export const ParticipantRow = (props: {
           callResolvedRef.current = true;
           setCalling(null);
           sounds.ringing.stop();
-          sounds.callAccepted.play();
           tauriUtils.showWindow("main");
           const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
           setCallTokens({
             ...data.payload,
+            connectingTo: props.user.id,
             timeStarted: new Date(),
             hasAudioEnabled: startMic,
             hasCameraEnabled: startCamera,

@@ -1,15 +1,8 @@
 import { formatDistanceToNow } from "date-fns";
 import { LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
-import { PiScribbleLoopBold, PiCursorBold } from "react-icons/pi";
 import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-  DropdownMenuCheckboxItem,
-} from "@/components/ui/dropdown-menu";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
@@ -20,7 +13,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { CustomIcons } from "@/components/ui/icons";
 import clsx from "clsx";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
-import { MoreHorizontal, X } from "lucide-react";
 import { HiOutlinePhoneXMark, HiMiniLink } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -30,7 +22,6 @@ import { typedInvoke } from "@/core_payloads";
 import { useQuery } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { getAllWindows } from "@tauri-apps/api/window";
-import { sounds } from "@/constants/sounds";
 
 const Colors = {
   deactivatedIcon: "text-slate-600",
@@ -140,6 +131,10 @@ export function CallCenter() {
 
   if (!callTokens) return null;
 
+  const isConnecting = callTokens.isInitialisingCall || !!callTokens.connectingTo;
+  const connectingToName =
+    callTokens.connectingTo && teammates?.find((t) => t.id === callTokens.connectingTo)?.first_name;
+
   return (
     <div className="flex flex-col items-center w-full max-w-sm mx-auto bg-white pt-4 mb-4">
       {/* Reconnecting Banner */}
@@ -152,15 +147,15 @@ export function CallCenter() {
 
       <div className="w-full">
         {/* Initial connecting banner */}
-        {callTokens.isInitialisingCall && (
+        {isConnecting && (
           <div className="mb-4 text-xs font-medium flex flex-row gap-2 items-center justify-center">
             <div className="animate-spin size-3 border-[1.5px] border-slate-400 border-t-transparent rounded-full" />
-            Connecting to call
+            {connectingToName ? `Connecting to ${connectingToName}` : "Connecting to call"}
           </div>
         )}
 
         {/* Call Timer */}
-        {!callTokens.isInitialisingCall &&
+        {!isConnecting &&
           (callTokens.room ?
             <div className="w-full flex flex-col items-center gap-0.5 mb-4">
               <div className="flex items-center justify-center gap-1.5">
@@ -264,7 +259,6 @@ export function CallCenter() {
                 </Tooltip>
               </TooltipProvider>
             )}
-            {callTokens?.role === ParticipantRole.SHARER && <DrawingEnableButton />}
             <TooltipProvider>
               <Tooltip delayDuration={100}>
                 <TooltipTrigger asChild>
@@ -298,15 +292,6 @@ function CallParticipants() {
   const { callTokens, teammates, user } = useStore();
   const coreParticipants = callTokens?.participants ?? [];
   const isRoomCall = !!(callTokens?.isRoomCall || callTokens?.room);
-  const prevCountRef = useRef(coreParticipants.length);
-
-  // Play sound when a new participant connects (count increases)
-  useEffect(() => {
-    if (coreParticipants.length > prevCountRef.current && prevCountRef.current !== 0) {
-      sounds.callAccepted.play();
-    }
-    prevCountRef.current = coreParticipants.length;
-  }, [coreParticipants.length]);
 
   const participantList = useMemo(() => {
     const extractUserId = (identity: string): string => {
@@ -402,150 +387,6 @@ function CallParticipants() {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function DrawingEnableButton() {
-  const [drawingPermanent, setDrawingPermanent] = useState(false);
-  const [drawingEnabled, setDrawingEnabled] = useState(false);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [hintShown, setHintShown] = useState(false);
-
-  useEffect(() => {
-    const loadPreferences = async () => {
-      try {
-        const [permanent, shown] = await Promise.all([
-          tauriUtils.getSharerDrawPersist(),
-          tauriUtils.getDrawingHintShown(),
-        ]);
-        setDrawingPermanent(permanent);
-        setHintShown(shown);
-      } catch (error) {
-        console.error("Failed to load drawing preferences:", error);
-      }
-    };
-    loadPreferences();
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen("core_drawing_disabled", () => {
-      setDrawingEnabled(false);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  const handlePermanentToggle = async (checked: boolean) => {
-    setDrawingPermanent(checked);
-    try {
-      await tauriUtils.setSharerDrawPersist(checked);
-    } catch (error) {
-      console.error("Failed to save drawing permanent preference:", error);
-    }
-  };
-
-  const handleToggleDrawing = async () => {
-    const newEnabled = !drawingEnabled;
-    try {
-      if (newEnabled && !hintShown) {
-        await new Promise<void>((resolve) => {
-          const toastDurationMs = 3_000;
-          let dismissed = false;
-          let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-          const dismissHintToast = () => {
-            if (dismissed) return;
-            dismissed = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            resolve();
-          };
-
-          const toastId = toast(
-            (t) => (
-              <div className="flex items-center gap-3">
-                <span className="text-sm leading-none">Press ESC to exit drawing mode</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    toast.dismiss(t.id);
-                    dismissHintToast();
-                  }}
-                  aria-label="Dismiss drawing hint"
-                  className="size-6 shrink-0 rounded-full border-0 bg-white p-0 text-slate-900 transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
-                >
-                  <X className="mx-auto size-3 stroke-[1.25]" />
-                </button>
-              </div>
-            ),
-            { duration: toastDurationMs },
-          );
-
-          timeoutId = setTimeout(() => {
-            toast.dismiss(toastId);
-            dismissHintToast();
-          }, toastDurationMs);
-        });
-        await tauriUtils.setDrawingHintShown(true);
-        setHintShown(true);
-      }
-
-      await tauriUtils.setDrawingEnabled(newEnabled, drawingPermanent);
-      setDrawingEnabled(newEnabled);
-    } catch (error) {
-      console.error("Failed to toggle drawing:", error);
-      toast.error("Failed to toggle drawing", { duration: 2500 });
-    }
-  };
-
-  return (
-    <div className="inline-flex -space-x-px rounded-lg shadow-xs">
-      <TooltipProvider>
-        <Tooltip delayDuration={100}>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={handleToggleDrawing}
-              className="rounded-none first:rounded-l-lg focus:z-10"
-            >
-              {drawingEnabled ?
-                <PiCursorBold className="size-4" />
-              : <PiScribbleLoopBold className="size-4" />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{drawingEnabled ? "Disable drawing" : "Enable drawing"}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-      <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
-        <TooltipProvider>
-          <Tooltip delayDuration={100}>
-            <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="rounded-none last:rounded-r-lg focus:z-10"
-                  aria-label="Drawing options"
-                >
-                  <MoreHorizontal className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Drawing options</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        <DropdownMenuContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
-          align="start"
-          className="w-auto min-w-[200px]"
-        >
-          <DropdownMenuCheckboxItem checked={drawingPermanent} onCheckedChange={handlePermanentToggle}>
-            <span>Persist until right click</span>
-          </DropdownMenuCheckboxItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   );
 }

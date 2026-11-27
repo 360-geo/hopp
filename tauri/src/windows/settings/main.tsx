@@ -443,6 +443,12 @@ function SettingsWindow() {
   });
   const systemDefaultMic = microphones.find((device) => device.default)?.name;
 
+  const { data: drawPersist = false, refetch: refetchDrawPersist } = useQuery({
+    queryKey: ["draw-persist"],
+    queryFn: () => typedInvoke("get_sharer_draw_persist"),
+    refetchOnWindowFocus: true,
+  });
+
   useEffect(() => {
     if (settings) {
       setServerUrl(settings.hopp_server_url ?? "");
@@ -517,8 +523,8 @@ function SettingsWindow() {
                     }}
                   />
                   <CheckboxRow
-                    title="Show dock icon when in call"
-                    description="Hide dock icon to save space when you are in a call"
+                    title="Show dock icon when viewing a shared screen"
+                    description="Switch to a teammate's shared screen with Cmd+Tab or the Dock"
                     checked={settings.show_dock_icon_in_call}
                     onCheckedChange={(v) => {
                       typedInvoke("set_show_dock_icon_in_call", { enabled: v }).then(() => refetchSettings());
@@ -637,6 +643,14 @@ function SettingsWindow() {
                     checked={settings.remote_control_enabled}
                     onCheckedChange={(v) => {
                       typedInvoke("set_remote_control_enabled", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                  <CheckboxRow
+                    title="Keep drawings until right-click"
+                    description="Lines you draw stay on screen until you right-click, instead of fading after a few seconds"
+                    checked={drawPersist}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_draw_persist", { persist: v }).then(() => refetchDrawPersist());
                     }}
                   />
                   <ResolutionRow
