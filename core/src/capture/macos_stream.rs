@@ -19,7 +19,7 @@ use std::sync::{
 use super::CapturerError;
 use crate::app_veil_state::{AppVeilState, TrackedApplication};
 
-const HOPP_BUNDLE_ID: &str = "com.hopp.app";
+const HOPP_BUNDLE_ID: &str = "nl.360geo.hopp";
 
 fn should_exclude_application(bundle_id: &str, applications: &[TrackedApplication]) -> bool {
     bundle_id != HOPP_BUNDLE_ID

@@ -1542,6 +1542,7 @@ fn main() {
                     log::error!("Failed to create app data dir: {e:?}");
                 }
             }
+            hopp::migrate_state_from_official_app(&app_data_dir);
 
             let (_core_process, sender, mut event_socket) =
                 create_core_process(app.handle()).expect("Failed to create core process");

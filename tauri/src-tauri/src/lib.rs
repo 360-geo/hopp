@@ -364,14 +364,14 @@ pub fn get_log_path() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         dirs::home_dir().map(|mut path| {
-            path.push("Library/Logs/com.hopp.app/hopp.log");
+            path.push("Library/Logs/nl.360geo.hopp/hopp.log");
             path
         })
     }
     #[cfg(target_os = "windows")]
     {
         dirs::data_local_dir().map(|mut path| {
-            path.push("com.hopp.app/logs/hopp.log");
+            path.push("nl.360geo.hopp/logs/hopp.log");
             path
         })
     }
@@ -749,6 +749,28 @@ pub fn set_window_corner_radius_and_decorations(
     if let Some(layer) = ns_view.layer() {
         layer.setCornerRadius(radius);
         layer.setMasksToBounds(true);
+    }
+}
+
+/// The 360Geo build has its own app ID (`nl.360geo.hopp`), so it starts
+/// with an empty data folder. The first time, copy the settings of the
+/// official Hopp (`com.hopp.app`): login, server URL and preferences.
+pub fn migrate_state_from_official_app(app_data_dir: &std::path::Path) {
+    const STATE_FILE: &str = "app_state.json";
+    let target = app_data_dir.join(STATE_FILE);
+    if target.exists() {
+        return;
+    }
+    let Some(source) = app_data_dir
+        .parent()
+        .map(|parent| parent.join("com.hopp.app").join(STATE_FILE))
+        .filter(|source| source.exists())
+    else {
+        return;
+    };
+    match std::fs::copy(&source, &target) {
+        Ok(_) => log::info!("Copied settings from the official Hopp app ({source:?})"),
+        Err(e) => log::error!("Failed to copy settings from {source:?}: {e:?}"),
     }
 }
 

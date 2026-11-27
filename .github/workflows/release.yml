@@ -1,5 +1,9 @@
 name: "Build Hopp Release"
 
+# 360Geo fork: Apple Silicon Macs only, signed with our own certificate (no Apple
+# notarization), updates served from this repo's releases. Publish the draft
+# release when it's done; the apps update from the latest published release.
+
 on:
   workflow_dispatch:
     inputs:
@@ -71,20 +75,13 @@ jobs:
     needs: prepare-notes
     permissions:
       contents: write
-    environment: Release
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: "macos-26"
-            args: "--target x86_64-apple-darwin --config src-tauri/tauri.conf.rel.json"
-            target: "x86_64-apple-darwin"
-          - platform: "macos-26"
             args: "--target aarch64-apple-darwin --config src-tauri/tauri.conf.rel.json"
             target: "aarch64-apple-darwin"
-          - platform: "windows-latest"
-            args: "--target x86_64-pc-windows-msvc --config src-tauri/tauri.conf.rel.json"
-            target: "x86_64-pc-windows-msvc"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -92,7 +89,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
-          token: ${{ secrets.GH_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -159,29 +155,33 @@ jobs:
               ;;
           esac
 
-      - name: Import Apple Developer Certificate
-        if: matrix.platform == 'macos-26'
+      # Our self-signed certificate isn't trusted, so Tauri's own import (which
+      # only accepts trusted identities) can't use it; codesign can.
+      - name: Import code signing certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
+          security list-keychains -d user -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
           security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          security find-identity -v -p codesigning build.keychain
+          rm certificate.p12
+          security find-identity -p codesigning build.keychain
 
-      - name: Verify certificate and set signing identity
-        if: matrix.platform == 'macos-26'
+      - name: Set app version from the release version
+        shell: bash
         run: |
-          CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
-          CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
-          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
-          echo "Certificate imported: $CERT_ID"
+          version="${{ github.event.inputs.version }}"
+          version="${version#v}"
+          jq --arg version "$version" '.version = $version' tauri/src-tauri/tauri.conf.json > tauri.conf.json.tmp
+          mv tauri.conf.json.tmp tauri/src-tauri/tauri.conf.json
+          echo "App version: $version"
 
       - name: Run core:release task
         shell: bash
@@ -209,13 +209,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          # Signs with the certificate imported above. Without APPLE_ID it
+          # skips notarization.
+          APPLE_SIGNING_IDENTITY: "360Geo Hopp Code Signing"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
           VITE_BOTTOM_ARROW: ${{ steps.vite_vars.outputs.vite_bottom_arrow }}
@@ -237,15 +233,3 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: false
           updaterJsonKeepUniversal: false
-
-      - name: Zip Windows MSI for browser-safe download
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $msi = Get-ChildItem -Path "tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi" -Filter "hopp_*_x64_en-US.msi" | Select-Object -First 1
-          if (-not $msi) { throw "MSI not found" }
-          $zip = Join-Path $env:RUNNER_TEMP "hopp_x64_en-US.msi.zip"
-          Compress-Archive -Path $msi.FullName -DestinationPath $zip -Force
-          gh release upload "${{ github.event.inputs.version }}" $zip --clobber --repo "$env:GITHUB_REPOSITORY"

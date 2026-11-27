@@ -51,7 +51,7 @@ use crate::{
 #[path = "panel.rs"]
 mod panel;
 
-const HOPP_BUNDLE_ID: &str = "com.hopp.app";
+const HOPP_BUNDLE_ID: &str = "nl.360geo.hopp";
 const NOTIFICATION_CENTER_BUNDLE_ID: &str = "com.apple.notificationcenterui";
 const GEOMETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const PANEL_SETTLE_DELAY: Duration = Duration::from_millis(200);

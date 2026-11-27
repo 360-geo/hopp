@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
-const HOPP_BUNDLE_ID: &str = "com.hopp.app";
+const HOPP_BUNDLE_ID: &str = "nl.360geo.hopp";
 pub(crate) const NOTIFICATION_CENTER_BUNDLE_ID: &str = "com.apple.notificationcenterui";
 
 #[derive(Debug, Clone, Serialize)]

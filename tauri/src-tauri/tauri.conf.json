@@ -30,11 +30,11 @@
   "productName": "hopp",
   "mainBinaryName": "hopp",
   "version": "1.0.33",
-  "identifier": "com.hopp.app",
+  "identifier": "nl.360geo.hopp",
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwQkQ0NjlDQ0Q0QkM4QTQKUldTa3lFdk5uRWE5a003RnhYVXV6OFZYc05UWFVBenRYTnhON2N5Zy8rVUYyd1JXRDNURVBGQ3MK",
-      "endpoints": ["https://github.com/gethopp/hopp/releases/latest/download/latest.json"]
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEyOTNEOUYzMUI3RDMyNDIKUldSQ01uMGI4OW1URXIrcHJ0bzFhZnpTSUZBaFhYZlNZRHF4SHpHL2FCYTBKWjQ0eWpPTDJsUTQK",
+      "endpoints": ["https://github.com/360-geo/hopp/releases/latest/download/latest.json"]
     },
     "deep-link": {
       "desktop": {

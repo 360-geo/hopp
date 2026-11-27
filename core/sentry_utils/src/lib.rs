@@ -41,14 +41,14 @@ pub fn get_log_path() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         dirs::home_dir().map(|mut path| {
-            path.push("Library/Logs/com.hopp.app/hopp.log");
+            path.push("Library/Logs/nl.360geo.hopp/hopp.log");
             path
         })
     }
     #[cfg(target_os = "windows")]
     {
         dirs::data_local_dir().map(|mut path| {
-            path.push("com.hopp.app/logs/hopp.log");
+            path.push("nl.360geo.hopp/logs/hopp.log");
             path
         })
     }
