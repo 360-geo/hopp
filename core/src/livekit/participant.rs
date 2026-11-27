@@ -86,8 +86,14 @@ impl ParticipantInfo {
         self.camera_buffers.clone()
     }
 
+    /// Camera video is coming in: shared, or for the local user a private preview.
     pub fn camera_active(&self) -> bool {
         !self.camera_buffers.is_inactive()
+    }
+
+    /// Camera video others in the call can see: active and not a private preview.
+    pub fn camera_shared(&self) -> bool {
+        self.camera_active() && !self.camera_buffers.is_previewing()
     }
 
     pub fn set_audio_handle(&mut self, handle: AudioTrackHandle) {

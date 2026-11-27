@@ -112,6 +112,8 @@ const MIN_GRID_PADDING: f32 = 8.0;
 
 // Header height: split_button (20px) + padding top (12)
 const HEADER_HEIGHT: f32 = 20.0 + CONTENT_PADDING;
+/// Height of the preview label that replaces the call controls (their button height).
+const PREVIEW_LABEL_HEIGHT: f32 = 22.0;
 
 // Window size thresholds for small window styling
 const SMALL_WIDTH_THRESHOLD: f32 = 450.0;
@@ -155,6 +157,10 @@ pub enum CameraMessage {
     /// Mouse entered or left the local participant tile (for hover-only chrome).
     LocalTileHover(bool),
     PinToCorner,
+    /// Share the camera after its private preview.
+    PreviewShare,
+    /// Close the private preview without sharing.
+    PreviewCancel,
 }
 
 struct CameraState {
@@ -168,6 +174,8 @@ struct CameraState {
     /// Window narrower than `COMPACT_WIDTH_THRESHOLD` hides header, name labels, etc.
     is_compact: bool,
     toast: Option<ToastState>,
+    /// The local camera runs as a private preview, with Share and Cancel buttons.
+    previewing: bool,
 }
 
 impl Default for CameraState {
@@ -178,6 +186,7 @@ impl Default for CameraState {
             local_tile_hovered: false,
             is_compact: false,
             toast: None,
+            previewing: false,
         }
     }
 }
@@ -300,7 +309,7 @@ impl CameraWindow {
         let camera_active = participants
             .read()
             .ok()
-            .and_then(|p| p.get("local").map(|info| info.camera_active()))
+            .and_then(|p| p.get("local").map(|info| info.camera_shared()))
             .unwrap_or(false);
         let state = CameraState {
             viewport_size: IcedSize::new(logical.width, logical.height),
@@ -391,7 +400,7 @@ impl CameraWindow {
             .participants
             .read()
             .ok()
-            .and_then(|p| p.get("local").map(|info| info.camera_active()))
+            .and_then(|p| p.get("local").map(|info| info.camera_shared()))
             .unwrap_or(false);
         self.state = CameraState {
             viewport_size: IcedSize::new(logical.width, logical.height),
@@ -656,11 +665,25 @@ impl CameraWindow {
             .view(participants, CallControlsDensity::Regular)
             .map(CameraMessage::CallControls);
 
-        // ── Header with centered controls (space for native traffic lights)
+        // ── Header with centered controls (space for native traffic lights).
+        // A private preview shows what it is instead of the call controls.
+        let header_center: iced::Element<'a, CameraMessage, Theme, iced::Renderer> =
+            if state.previewing {
+                container(
+                    text("Preview: only you can see this")
+                        .font(GEIST_MEDIUM)
+                        .size(13)
+                        .color(ColorToken::Slate300.to_color()),
+                )
+                .center_y(Length::Fixed(PREVIEW_LABEL_HEIGHT))
+                .into()
+            } else {
+                controls
+            };
         let header = row![
             Space::new().width(Length::Fixed(80.0)), // Space for native macOS traffic lights
             Space::new().width(Length::Fill),
-            controls,
+            header_center,
             Space::new().width(Length::Fill),
             Space::new().width(Length::Fixed(80.0)), // Balance spacing
         ]
@@ -780,11 +803,36 @@ impl CameraWindow {
                     .into(),
             );
         }
+        if state.previewing {
+            layers.push(
+                container(preview_actions())
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::End)
+                    .padding(Padding {
+                        top: 0.0,
+                        right: 0.0,
+                        bottom: 20.0,
+                        left: 0.0,
+                    })
+                    .into(),
+            );
+        }
         if let Some(toast_el) = toast::toast_view(&state.toast, Some(&toast_position)) {
             layers.push(toast_el);
         }
 
         stack(layers).into()
+    }
+
+    /// Shows the local camera as a private preview with Share and Cancel
+    /// buttons, or goes back to the normal call view.
+    pub fn set_preview(&mut self, previewing: bool) {
+        self.state.previewing = previewing;
+        if previewing {
+            self.state.self_hidden = false;
+        }
     }
 
     pub fn show_error_toast(&mut self, message: &str) {
@@ -822,6 +870,14 @@ impl CameraWindow {
                 } else {
                     self.pin_to_corner();
                 }
+            }
+            CameraMessage::PreviewShare => {
+                let _ = self
+                    .event_loop_proxy
+                    .send_event(UserEvent::CameraPreviewShare);
+            }
+            CameraMessage::PreviewCancel => {
+                let _ = self.event_loop_proxy.send_event(UserEvent::StopCamera);
             }
         }
     }
@@ -1152,6 +1208,55 @@ fn initials_avatar<'a>(
 
 /// Tile corner radius for participant cards (Figma: 6px).
 const TILE_RADIUS: f32 = 6.0;
+
+/// Share and Cancel for the camera's private preview.
+fn preview_actions<'a>() -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
+    fn action<'a>(
+        label: &'a str,
+        message: CameraMessage,
+        idle: ColorToken,
+        hovered: ColorToken,
+    ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
+        button(text(label).font(GEIST_MEDIUM).size(13).color(Color::WHITE))
+            .padding(Padding::from([8.0, 18.0]))
+            .on_press(message)
+            .style(move |_theme: &Theme, status| {
+                let background = match status {
+                    button::Status::Hovered | button::Status::Pressed => hovered.to_color(),
+                    _ => idle.to_color(),
+                };
+                button::Style {
+                    background: Some(Background::Color(background)),
+                    border: Border {
+                        color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    text_color: Color::WHITE,
+                    shadow: ShadowToken::Xs.to_shadow(),
+                    snap: false,
+                }
+            })
+            .into()
+    }
+
+    row![
+        action(
+            "Cancel",
+            CameraMessage::PreviewCancel,
+            ColorToken::Slate700,
+            ColorToken::Slate600
+        ),
+        action(
+            "Share webcam",
+            CameraMessage::PreviewShare,
+            ColorToken::Blue600,
+            ColorToken::Blue500
+        ),
+    ]
+    .spacing(10)
+    .into()
+}
 
 fn self_visibility_button<'a>(
     is_hidden: bool,

@@ -52,7 +52,7 @@ impl SnapshotSender {
                         name: info.name().to_string(),
                         connected: true,
                         muted: info.muted(),
-                        has_camera: info.camera_active(),
+                        has_camera: info.camera_shared(),
                         is_screensharing: info.is_screensharing(),
                     },
                 );

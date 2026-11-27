@@ -229,6 +229,9 @@ pub enum Message {
     /// Let the core move the microphone's macOS input volume so speech
     /// reaches it at a steady level.
     SetAutoMicVolume(bool),
+    /// Turning the camera on first shows the user a private preview, shared
+    /// only after they click Share.
+    SetWebcamPreview(bool),
     StartAudioCapture(AudioCaptureMessage),
     StartAudioCaptureResult(Result<(), String>),
     StopAudioCapture,

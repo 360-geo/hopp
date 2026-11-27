@@ -1085,6 +1085,18 @@ fn set_audio_output(app: tauri::AppHandle, device_name: Option<String>) {
 }
 
 #[tauri::command(async)]
+fn set_webcam_preview(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_webcam_preview: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.webcam_preview = enabled);
+    if let Err(e) = data.sender.send(Message::SetWebcamPreview(enabled)) {
+        log::error!("set_webcam_preview: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
 fn set_auto_mic_volume(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_auto_mic_volume: {enabled}");
     let data = app.state::<Mutex<AppData>>();
@@ -1643,6 +1655,10 @@ fn main() {
             if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
             }
+            let webcam_preview = app_state.user_settings().webcam_preview;
+            if let Err(e) = sender.send(Message::SetWebcamPreview(webcam_preview)) {
+                log::error!("Failed to send initial webcam_preview: {e:?}");
+            }
             let auto_mic_volume = app_state.user_settings().auto_mic_volume;
             if let Err(e) = sender.send(Message::SetAutoMicVolume(auto_mic_volume)) {
                 log::error!("Failed to send initial auto_mic_volume: {e:?}");
@@ -2014,6 +2030,7 @@ fn main() {
             list_speakers,
             set_audio_output,
             set_auto_mic_volume,
+            set_webcam_preview,
             select_microphone,
             list_webcams,
             start_camera,

@@ -93,6 +93,9 @@ pub struct VideoBufferManager {
     buffers: [Mutex<VideoBuffer>; 2],
     write_index: AtomicUsize,
     inactive: std::sync::atomic::AtomicBool,
+    /// The local camera runs for a private preview: shown to the user only,
+    /// not shared with the call.
+    previewing: std::sync::atomic::AtomicBool,
     frame_id: AtomicU64,
 }
 
@@ -105,6 +108,7 @@ impl Default for VideoBufferManager {
             ],
             write_index: AtomicUsize::new(0),
             inactive: std::sync::atomic::AtomicBool::new(true),
+            previewing: std::sync::atomic::AtomicBool::new(false),
             frame_id: AtomicU64::new(0),
         }
     }
@@ -138,6 +142,14 @@ impl VideoBufferManager {
     /// Mark the stream as inactive.
     pub fn set_inactive(&self, inactive: bool) {
         self.inactive.store(inactive, Ordering::Release);
+    }
+
+    pub fn is_previewing(&self) -> bool {
+        self.previewing.load(Ordering::Acquire)
+    }
+
+    pub fn set_previewing(&self, previewing: bool) {
+        self.previewing.store(previewing, Ordering::Release);
     }
 
     /// Returns the current frame counter (lock-free).

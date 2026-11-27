@@ -835,6 +835,14 @@ function SettingsWindow() {
                   typedInvoke("set_start_camera_on_call", { enabled: v }).then(() => refetchSettings());
                 }}
               />
+              <ToggleRow
+                title="Show preview before sharing"
+                description="Check how you look first. Only you see the preview until you click Share webcam."
+                checked={settings.webcam_preview}
+                onCheckedChange={(v) => {
+                  typedInvoke("set_webcam_preview", { enabled: v }).then(() => refetchSettings());
+                }}
+              />
             </SettingsGroup>
           )}
 

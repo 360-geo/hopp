@@ -412,6 +412,8 @@ pub struct Application<'a> {
     audio_capturer: audio::capturer::Capturer,
     audio_player: audio::player::Player,
     noise_cancellation_enabled: Arc<AtomicBool>,
+    /// Turning the camera on first shows a private preview (Settings > Webcam).
+    webcam_preview_enabled: bool,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     screensharing_active: bool,
     context_manager: Option<ContextManager>,
@@ -505,6 +507,7 @@ impl<'a> Application<'a> {
             audio_capturer,
             audio_player,
             noise_cancellation_enabled: Arc::new(AtomicBool::new(true)),
+            webcam_preview_enabled: true,
             camera_capturer: camera_capturer.clone(),
             screensharing_active: false,
             context_manager: None,
@@ -874,7 +877,13 @@ impl<'a> Application<'a> {
             capturer.stop_capture();
         }
         if let Some(room_service) = self.room_service.as_ref() {
+            room_service
+                .local_camera_buffer_manager()
+                .set_previewing(false);
             room_service.mute_camera_track();
+        }
+        if let Some(camera_window) = &mut self.camera_window {
+            camera_window.set_preview(false);
         }
     }
 
@@ -2298,11 +2307,21 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 };
 
+                // Turning the camera on shows a private preview first, unless
+                // it's already shared: switching devices keeps sharing.
+                let local_camera = room_service.local_camera_buffer_manager();
+                let already_shared = !local_camera.is_inactive() && !local_camera.is_previewing();
+                let preview = self.webcam_preview_enabled && !already_shared;
+                local_camera.set_previewing(preview);
+
                 // Open camera window first for snappiness
                 {
                     let participants = room_service.participants();
                     let _ = room_service;
                     self.open_camera_window(event_loop, participants);
+                }
+                if let Some(camera_window) = &mut self.camera_window {
+                    camera_window.set_preview(preview);
                 }
 
                 let room_service = self.room_service.as_ref().unwrap();
@@ -2318,8 +2337,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 };
                 if let Err(ref e) = capture_result {
                     log::error!("user_event: StartCamera failed: {e}");
+                    local_camera.set_previewing(false);
                     room_service.mute_camera_track();
                     if let Some(cam) = &mut self.camera_window {
+                        cam.set_preview(false);
                         cam.show_error_toast("Failed to start camera");
                     }
                     if from_socket {
@@ -2339,8 +2360,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
 
-                // Unmute camera track (fire-and-forget)
-                room_service.unmute_camera_track();
+                // Share the camera (fire-and-forget), or wait for Share in the preview.
+                if preview {
+                    log::info!("user_event: StartCamera: showing a private preview");
+                } else {
+                    room_service.unmute_camera_track();
+                }
 
                 let actual_name = {
                     let capturer = self.camera_capturer.lock().unwrap();
@@ -2357,7 +2382,29 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 room_service.send_participants_snapshot();
+                self.set_call_controls_camera(!preview, actual_name);
+            }
+            UserEvent::CameraPreviewShare => {
+                log::info!("user_event: CameraPreviewShare");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service
+                        .local_camera_buffer_manager()
+                        .set_previewing(false);
+                    room_service.unmute_camera_track();
+                    room_service.send_participants_snapshot();
+                }
+                if let Some(camera_window) = &mut self.camera_window {
+                    camera_window.set_preview(false);
+                }
+                let actual_name = {
+                    let capturer = self.camera_capturer.lock().unwrap();
+                    capturer.active_device_name().map(|s| s.to_string())
+                };
                 self.set_call_controls_camera(true, actual_name);
+            }
+            UserEvent::SetWebcamPreview(enabled) => {
+                log::info!("user_event: SetWebcamPreview({enabled})");
+                self.webcam_preview_enabled = enabled;
             }
             UserEvent::StopCamera => {
                 log::info!("user_event: StopCamera");
@@ -3339,6 +3386,9 @@ pub enum UserEvent {
     ListAudioOutputs,
     SetAudioOutput(Option<String>),
     SetAutoMicVolume(bool),
+    SetWebcamPreview(bool),
+    /// Share the camera after its private preview.
+    CameraPreviewShare,
     /// The capture thread asks to move the microphone's input volume by this many dB.
     AdjustMicVolume(f32),
     DefaultInputDeviceChanged,
@@ -3468,6 +3518,7 @@ impl RenderEventLoop {
                         UserEvent::SetAudioOutput(output_device)
                     }
                     Message::SetAutoMicVolume(enabled) => UserEvent::SetAutoMicVolume(enabled),
+                    Message::SetWebcamPreview(enabled) => UserEvent::SetWebcamPreview(enabled),
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture {
                         msg,
                         from_socket: true,

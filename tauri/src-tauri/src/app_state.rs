@@ -87,6 +87,10 @@ pub struct UserSettings {
     /// microphone at a steady level.
     #[serde(default = "default_true")]
     pub auto_mic_volume: bool,
+    /// Turning the camera on first shows a private preview, shared only after
+    /// the user clicks Share.
+    #[serde(default = "default_true")]
+    pub webcam_preview: bool,
 }
 
 impl Default for UserSettings {
@@ -113,6 +117,7 @@ impl Default for UserSettings {
             notify_when_alone: true,
             audio_output: None,
             auto_mic_volume: true,
+            webcam_preview: true,
         }
     }
 }
