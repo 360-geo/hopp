@@ -195,14 +195,66 @@ impl audio_mixer::AudioMixerSource for AudioSource {
     }
 }
 
+/// Name of an output device, as cpal reports it.
+fn output_device_name(device: &cpal::Device) -> Option<String> {
+    #[allow(deprecated)]
+    device.name().ok()
+}
+
+/// The speakers and headphones call audio can play on, with the system
+/// default output flagged.
+pub fn list_audio_outputs() -> Vec<socket_lib::AudioDevice> {
+    let host = cpal::default_host();
+    let default_name = host
+        .default_output_device()
+        .and_then(|device| output_device_name(&device));
+    let devices = match host.output_devices() {
+        Ok(devices) => devices,
+        Err(e) => {
+            error!("Failed to list audio outputs: {e}");
+            return vec![];
+        }
+    };
+    devices
+        .filter_map(|device| output_device_name(&device))
+        .map(|name| socket_lib::AudioDevice {
+            default: default_name.as_deref() == Some(name.as_str()),
+            name,
+        })
+        .collect()
+}
+
+/// Whether an output device with this name is connected.
+pub fn output_device_exists(name: &str) -> bool {
+    cpal::default_host()
+        .output_devices()
+        .is_ok_and(|mut devices| {
+            devices.any(|device| output_device_name(&device).as_deref() == Some(name))
+        })
+}
+
+/// The named output device, or the system default when it's `None` or no
+/// longer connected.
+fn find_output_device(name: Option<&str>) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+    if let Some(name) = name {
+        let found = host.output_devices().ok().and_then(|mut devices| {
+            devices.find(|device| output_device_name(device).as_deref() == Some(name))
+        });
+        if found.is_some() {
+            return found;
+        }
+        log::warn!("Audio output {name:?} is not connected, using the system default");
+    }
+    host.default_output_device()
+}
+
 fn open_output_stream(
     mixer: Arc<Mutex<AudioMixer>>,
     apm: SharedProcessor,
+    output_device: Option<&str>,
 ) -> Result<cpal::Stream, String> {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or("No default output device")?;
+    let device = find_output_device(output_device).ok_or("No audio output device")?;
     let cfg = device
         .default_output_config()
         .map_err(|e| format!("Failed to get output config: {e}"))?;
@@ -216,8 +268,10 @@ fn open_output_stream(
     };
 
     info!(
-        "cpal output: {}Hz {}ch",
-        output_sample_rate, output_channels
+        "cpal output: {:?} {}Hz {}ch",
+        output_device_name(&device),
+        output_sample_rate,
+        output_channels
     );
 
     // Buffer draining pattern adapted from Zed's audio playback implementation:
@@ -301,10 +355,11 @@ fn open_output_stream(
 }
 
 impl MixerHandle {
-    pub fn new() -> Result<(Self, SharedProcessor), String> {
+    /// Starts playback on `output_device`, or the system default output when `None`.
+    pub fn new(output_device: Option<&str>) -> Result<(Self, SharedProcessor), String> {
         let apm = Arc::new(Mutex::new(CaptureProcessing::new()));
         let mixer = Arc::new(Mutex::new(AudioMixer::new()));
-        let stream = open_output_stream(mixer.clone(), apm.clone())?;
+        let stream = open_output_stream(mixer.clone(), apm.clone(), output_device)?;
         let handle = Self {
             inner: Arc::new(Mutex::new(MixerInner {
                 _stream: stream,
@@ -332,9 +387,10 @@ impl MixerHandle {
         source
     }
 
-    pub fn reconnect(&self) -> Result<(), String> {
+    /// Reopens playback on `output_device`, or the system default output when `None`.
+    pub fn reconnect(&self, output_device: Option<&str>) -> Result<(), String> {
         let mut inner = self.inner.lock();
-        let stream = open_output_stream(inner.mixer.clone(), inner.apm.clone())?;
+        let stream = open_output_stream(inner.mixer.clone(), inner.apm.clone(), output_device)?;
         inner._stream = stream;
         info!("Audio output reconnected");
         Ok(())

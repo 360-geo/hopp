@@ -1051,6 +1051,40 @@ fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
 }
 
 #[tauri::command(async)]
+fn list_speakers(app: tauri::AppHandle) -> Vec<AudioDevice> {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::ListAudioOutputs) {
+        log::error!("list_speakers: failed to send: {e:?}");
+        return vec![];
+    }
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::AudioOutputList(d) => Ok(d),
+        other => Err(other),
+    }) {
+        Ok(devices) => devices,
+        Err(e) => {
+            log::error!("list_speakers: recv failed: {e:?}");
+            vec![]
+        }
+    }
+}
+
+/// Plays call audio on `device_name`, or the system default output when `None`.
+/// Applies right away, also mid-call.
+#[tauri::command(async)]
+fn set_audio_output(app: tauri::AppHandle, device_name: Option<String>) {
+    log::info!("set_audio_output: {device_name:?}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.audio_output = device_name.clone());
+    if let Err(e) = data.sender.send(Message::SetAudioOutput(device_name)) {
+        log::error!("set_audio_output: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
 fn set_default_mic(
     app: tauri::AppHandle,
     device_name: Option<String>,
@@ -1593,6 +1627,10 @@ fn main() {
             if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
             }
+            let audio_output = app_state.user_settings().audio_output;
+            if let Err(e) = sender.send(Message::SetAudioOutput(audio_output)) {
+                log::error!("Failed to send initial audio_output: {e:?}");
+            }
             let screen_share_resolution = app_state.user_settings().screen_share_resolution;
             if let Err(e) = sender.send(Message::SetScreenShareResolution(screen_share_resolution)) {
                 log::error!("Failed to send initial screen_share_resolution: {e:?}");
@@ -1953,6 +1991,8 @@ fn main() {
             set_screen_share_resolution,
             set_screen_share_picker_mode,
             list_microphones,
+            list_speakers,
+            set_audio_output,
             select_microphone,
             list_webcams,
             start_camera,

@@ -79,6 +79,10 @@ pub struct UserSettings {
     /// Remind the user with a notification while they're the only one left in a call.
     #[serde(default = "default_true")]
     pub notify_when_alone: bool,
+    /// The speakers or headphones call audio plays on; `None` follows the
+    /// system default output.
+    #[serde(default)]
+    pub audio_output: Option<String>,
 }
 
 impl Default for UserSettings {
@@ -103,6 +107,7 @@ impl Default for UserSettings {
             auto_update_enabled: true,
             app_veil_applications: default_app_veil_applications(),
             notify_when_alone: true,
+            audio_output: None,
         }
     }
 }

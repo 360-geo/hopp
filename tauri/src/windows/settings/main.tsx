@@ -66,7 +66,9 @@ function PaneHeader({
       >
         {icon}
       </div>
-      <h1 className="mt-3 text-xl font-semibold tracking-normal text-gray-900 lg:text-xl dark:text-zinc-100">{title}</h1>
+      <h1 className="mt-3 text-xl font-semibold tracking-normal text-gray-900 lg:text-xl dark:text-zinc-100">
+        {title}
+      </h1>
       <p className="mt-1 max-w-xs text-sm leading-snug text-gray-500 dark:text-zinc-400">{subtitle}</p>
     </header>
   );
@@ -76,7 +78,11 @@ function PaneHeader({
 function SettingsGroup({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      {title && <h2 className="border-0 px-1 pb-0 text-[13px] font-semibold tracking-normal text-gray-700 dark:text-zinc-300">{title}</h2>}
+      {title && (
+        <h2 className="border-0 px-1 pb-0 text-[13px] font-semibold tracking-normal text-gray-700 dark:text-zinc-300">
+          {title}
+        </h2>
+      )}
       <div className="rounded-xl bg-white px-4 ring-1 ring-black/5 divide-y divide-gray-200 dark:bg-white/[0.04] dark:ring-white/5 dark:divide-white/[0.07]">
         {children}
       </div>
@@ -512,6 +518,14 @@ function SettingsWindow() {
   });
   const systemDefaultMic = microphones.find((device) => device.default)?.name;
 
+  const { data: speakers = [], refetch: refetchSpeakers } = useQuery({
+    queryKey: ["list_speakers"],
+    queryFn: () => typedInvoke("list_speakers"),
+    enabled: section === "audio",
+    select: (devices) => devices.filter((device) => device.name !== "").sort((a, b) => a.name.localeCompare(b.name)),
+  });
+  const systemDefaultSpeaker = speakers.find((device) => device.default)?.name;
+
   const { data: drawPersist = false, refetch: refetchDrawPersist } = useQuery({
     queryKey: ["draw-persist"],
     queryFn: () => typedInvoke("get_sharer_draw_persist"),
@@ -685,6 +699,41 @@ function SettingsWindow() {
           {current.id === "audio" && (
             <>
               <SettingsGroup>
+                <SettingRow
+                  title="Output device"
+                  description="System default follows your Mac's sound output, also during a call"
+                  htmlFor="audio-output"
+                >
+                  <Select
+                    value={settings.audio_output != null ? `speaker:${settings.audio_output}` : "system-default"}
+                    onOpenChange={(open) => {
+                      if (open) refetchSpeakers();
+                    }}
+                    onValueChange={(value) => {
+                      const deviceName = value.startsWith("speaker:") ? value.slice("speaker:".length) : null;
+                      typedInvoke("set_audio_output", { deviceName }).then(() => refetchSettings());
+                    }}
+                  >
+                    <SelectTrigger id="audio-output" className={rowSelectClassName}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="system-default">
+                        {systemDefaultSpeaker ? `System default (${systemDefaultSpeaker})` : "System default"}
+                      </SelectItem>
+                      {settings.audio_output && !speakers.some((device) => device.name === settings.audio_output) && (
+                        <SelectItem value={`speaker:${settings.audio_output}`} disabled>
+                          {settings.audio_output} (Unavailable)
+                        </SelectItem>
+                      )}
+                      {speakers.map((device) => (
+                        <SelectItem key={device.name} value={`speaker:${device.name}`}>
+                          {device.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
                 <SettingRow
                   title="Input device"
                   description="System default follows your Mac's input setting, also during a call"

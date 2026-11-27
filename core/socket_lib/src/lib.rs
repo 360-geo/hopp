@@ -221,6 +221,11 @@ pub enum Message {
     DrawingEnabled(DrawingEnabled),
     ListAudioDevices,
     AudioDeviceList(Vec<AudioDevice>),
+    /// Hopp asks for the speakers and headphones call audio can play on.
+    ListAudioOutputs,
+    AudioOutputList(Vec<AudioDevice>),
+    /// The device call audio plays on; `None` follows the macOS default output.
+    SetAudioOutput(Option<String>),
     StartAudioCapture(AudioCaptureMessage),
     StartAudioCaptureResult(Result<(), String>),
     StopAudioCapture,
@@ -278,6 +283,7 @@ impl Message {
             self,
             Message::CallStartResult(_)
                 | Message::AudioDeviceList(_)
+                | Message::AudioOutputList(_)
                 | Message::StartAudioCaptureResult(_)
                 | Message::CameraList(_)
                 | Message::StartCameraResult(_)

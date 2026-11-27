@@ -2515,12 +2515,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::DefaultOutputDeviceChanged => {
-                if let Some(mixer) = self.audio_player.mixer() {
-                    log::info!("Default audio output device changed, reconnecting...");
-                    if let Err(e) = mixer.reconnect() {
-                        log::error!("Failed to reconnect audio output: {e}");
-                    }
+                self.audio_player.handle_default_output_changed();
+            }
+            UserEvent::ListAudioOutputs => {
+                let outputs = audio::mixer::list_audio_outputs();
+                if let Err(e) = self.socket.send(Message::AudioOutputList(outputs)) {
+                    error!("user_event: Error sending audio output list: {e:?}");
                 }
+            }
+            UserEvent::SetAudioOutput(output_device) => {
+                self.audio_player.set_output_device(output_device);
             }
             UserEvent::DefaultInputDeviceChanged => {
                 self.audio_capturer.handle_default_device_changed(false);
@@ -3314,6 +3318,8 @@ pub enum UserEvent {
     BringWindowsToFront,
     SharerControlEnabled(bool),
     DefaultOutputDeviceChanged,
+    ListAudioOutputs,
+    SetAudioOutput(Option<String>),
     DefaultInputDeviceChanged,
     AudioCaptureError,
     SetNoiseCancellation(bool),
@@ -3436,6 +3442,10 @@ impl RenderEventLoop {
                     }
                     Message::LastModeChanged(mode) => UserEvent::LastModeChanged(mode),
                     Message::ListAudioDevices => UserEvent::ListAudioDevices,
+                    Message::ListAudioOutputs => UserEvent::ListAudioOutputs,
+                    Message::SetAudioOutput(output_device) => {
+                        UserEvent::SetAudioOutput(output_device)
+                    }
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture {
                         msg,
                         from_socket: true,
