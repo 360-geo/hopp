@@ -84,6 +84,11 @@ jobs:
             target: "aarch64-apple-darwin"
 
     runs-on: ${{ matrix.platform }}
+    env:
+      # libyuv comes from chromium.googlesource.com, whose clones fail now
+      # and then with cargo's built-in git; the git CLI with retries holds up.
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_RETRY: "10"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
