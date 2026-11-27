@@ -144,6 +144,9 @@ pub struct Capturer {
     event_loop_proxy: EventLoopProxy<UserEvent>,
 
     app_veil_state: AppVeilState,
+
+    /// Where the next capture sends the system audio, if it's shared.
+    system_audio_tap: Option<crate::audio::system_audio::SystemAudioTap>,
 }
 
 impl Capturer {
@@ -166,7 +169,17 @@ impl Capturer {
             active_stream: None,
             event_loop_proxy,
             app_veil_state: AppVeilState::default(),
+            system_audio_tap: None,
         }
+    }
+
+    /// Captures the system audio with the screen from the next `start_capture`
+    /// (macOS only), sending it to `tap`.
+    pub fn set_system_audio_tap(
+        &mut self,
+        tap: Option<crate::audio::system_audio::SystemAudioTap>,
+    ) {
+        self.system_audio_tap = tap;
     }
 
     /// Starts capturing frames from the specified content source.
@@ -214,6 +227,8 @@ impl Capturer {
             buffer_source,
             self.app_veil_state.clone(),
         )?;
+        #[cfg(target_os = "macos")]
+        stream.set_system_audio_tap(self.system_audio_tap.clone());
 
         stream.start_capture()?;
         self.active_stream = Some(stream);

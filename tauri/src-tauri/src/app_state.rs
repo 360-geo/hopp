@@ -95,6 +95,10 @@ pub struct UserSettings {
     /// browser; otherwise they're copied to the clipboard.
     #[serde(default = "default_true")]
     pub open_received_links: bool,
+    /// While sharing the screen, share the Mac's system audio too when
+    /// headphones are in use.
+    #[serde(default)]
+    pub share_system_audio: bool,
 }
 
 impl Default for UserSettings {
@@ -123,6 +127,7 @@ impl Default for UserSettings {
             auto_mic_volume: true,
             webcam_preview: true,
             open_received_links: true,
+            share_system_audio: false,
         }
     }
 }

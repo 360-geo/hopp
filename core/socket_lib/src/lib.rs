@@ -239,6 +239,9 @@ pub enum Message {
     /// Turning the camera on first shows the user a private preview, shared
     /// only after they click Share.
     SetWebcamPreview(bool),
+    /// While sharing the screen, share the Mac's system audio too when
+    /// headphones are in use. Turning it on applies from the next share.
+    SetShareSystemAudio(bool),
     /// A viewer sent the sharer a web link (core → Hopp), which opens it in
     /// the browser or copies it, as Settings say.
     LinkReceived(ReceivedLink),

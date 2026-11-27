@@ -1085,6 +1085,18 @@ fn set_audio_output(app: tauri::AppHandle, device_name: Option<String>) {
 }
 
 #[tauri::command(async)]
+fn set_share_system_audio(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_share_system_audio: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.share_system_audio = enabled);
+    if let Err(e) = data.sender.send(Message::SetShareSystemAudio(enabled)) {
+        log::error!("set_share_system_audio: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
 fn set_open_received_links(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_open_received_links: {enabled}");
     let data = app.state::<Mutex<AppData>>();
@@ -1711,6 +1723,10 @@ fn main() {
             if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
             }
+            let share_system_audio = app_state.user_settings().share_system_audio;
+            if let Err(e) = sender.send(Message::SetShareSystemAudio(share_system_audio)) {
+                log::error!("Failed to send initial share_system_audio: {e:?}");
+            }
             let webcam_preview = app_state.user_settings().webcam_preview;
             if let Err(e) = sender.send(Message::SetWebcamPreview(webcam_preview)) {
                 log::error!("Failed to send initial webcam_preview: {e:?}");
@@ -2088,6 +2104,7 @@ fn main() {
             set_auto_mic_volume,
             set_webcam_preview,
             set_open_received_links,
+            set_share_system_audio,
             select_microphone,
             list_webcams,
             start_camera,

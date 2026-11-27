@@ -124,6 +124,7 @@ export interface UserSettings {
   auto_mic_volume: boolean;
   webcam_preview: boolean;
   open_received_links: boolean;
+  share_system_audio: boolean;
 }
 
 export type CoreRoleChange = "Sharer" | "Controller" | "None";
@@ -228,6 +229,7 @@ export interface CommandMap {
   set_auto_mic_volume: { args: { enabled: boolean }; return: void };
   set_webcam_preview: { args: { enabled: boolean }; return: void };
   set_open_received_links: { args: { enabled: boolean }; return: void };
+  set_share_system_audio: { args: { enabled: boolean }; return: void };
   set_auto_update_enabled: { args: { enabled: boolean }; return: void };
   set_start_camera_on_call: { args: { enabled: boolean }; return: void };
   set_start_mic_on_call: { args: { enabled: boolean }; return: void };

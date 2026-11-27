@@ -870,6 +870,16 @@ function SettingsWindow() {
                     }}
                   />
                 )}
+                {OS === "macos" && (
+                  <ToggleRow
+                    title="Share system audio when using headphones"
+                    description="Pairs hear your Mac's sound while you share, without Hopp's call audio. Only with headphones, so your mic doesn't pick it up. Turning it on applies from your next share."
+                    checked={settings.share_system_audio}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_share_system_audio", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                )}
                 <ToggleRow
                   title="Let pairs control my screen"
                   description="Remote control is on when you start sharing"

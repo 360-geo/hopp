@@ -34,6 +34,11 @@ impl Player {
         }
     }
 
+    /// The output picked in Settings; `None` follows the system default.
+    pub fn output_device(&self) -> Option<&str> {
+        self.output_device.as_deref()
+    }
+
     /// Plays call audio on `output_device` from now on, also mid-call.
     pub fn set_output_device(&mut self, output_device: Option<String>) {
         if self.output_device == output_device {

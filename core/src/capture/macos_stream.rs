@@ -18,6 +18,7 @@ use std::sync::{
 
 use super::CapturerError;
 use crate::app_veil_state::{AppVeilState, TrackedApplication};
+use crate::audio::system_audio::{self, SystemAudioTap};
 
 const HOPP_BUNDLE_ID: &str = "nl.360geo.hopp";
 
@@ -162,6 +163,61 @@ pub struct Stream {
     scale: f64,
     target_process_id: Option<i32>,
     app_veil_state: AppVeilState,
+    /// Where to send the system audio, when it's captured with the screen.
+    system_audio: Option<SystemAudioTap>,
+}
+
+/// System audio capture format: what LiveKit sends. Two channels from
+/// ScreenCaptureKit, mixed down to mono here.
+const SYSTEM_AUDIO_SAMPLE_RATE: i32 = 48_000;
+const SYSTEM_AUDIO_CHANNELS: i32 = 2;
+
+/// The stream configuration, with system audio when it's captured too.
+fn stream_configuration(width: u32, height: u32, captures_audio: bool) -> SCStreamConfiguration {
+    let config = SCStreamConfiguration::new()
+        .with_width(width)
+        .with_height(height)
+        .with_pixel_format(PixelFormat::YCbCr_420v)
+        .with_shows_cursor(false)
+        .with_fps(60);
+    if !captures_audio {
+        return config;
+    }
+    // Leave out Hopp's own call audio: viewers already hear the call.
+    config
+        .with_captures_audio(true)
+        .with_excludes_current_process_audio(true)
+        .with_sample_rate(SYSTEM_AUDIO_SAMPLE_RATE)
+        .with_channel_count(SYSTEM_AUDIO_CHANNELS)
+}
+
+/// Turns one ScreenCaptureKit audio sample buffer into 48 kHz mono samples.
+fn system_audio_samples(sample: &CMSampleBuffer) -> Option<Vec<i16>> {
+    let format = sample.format_description()?;
+    if !format.audio_is_float() {
+        return None;
+    }
+    if format
+        .audio_sample_rate()
+        .is_some_and(|rate| rate as i32 != SYSTEM_AUDIO_SAMPLE_RATE)
+    {
+        return None;
+    }
+    let buffers = sample.audio_buffer_list()?;
+    let buffers: Vec<_> = buffers.iter().collect();
+    match buffers.as_slice() {
+        [] => None,
+        [interleaved] => Some(system_audio::mono_from_interleaved(
+            &system_audio::f32_samples(interleaved.data()),
+            interleaved.number_channels.max(1) as usize,
+        )),
+        planes => Some(system_audio::mono_from_planes(
+            &planes
+                .iter()
+                .map(|plane| system_audio::f32_samples(plane.data()))
+                .collect::<Vec<_>>(),
+        )),
+    }
 }
 
 impl Stream {
@@ -189,7 +245,14 @@ impl Stream {
             scale,
             target_process_id: None,
             app_veil_state,
+            system_audio: None,
         })
+    }
+
+    /// Captures the system audio along with the screen from the next start,
+    /// sending it to `tap` while the tap is enabled.
+    pub fn set_system_audio_tap(&mut self, tap: Option<SystemAudioTap>) {
+        self.system_audio = tap;
     }
 
     fn display_filter(
@@ -320,12 +383,7 @@ impl Stream {
             *sb = StreamBuffer::new(stream_width, stream_height);
         }
 
-        let config = SCStreamConfiguration::new()
-            .with_width(stream_width)
-            .with_height(stream_height)
-            .with_pixel_format(PixelFormat::YCbCr_420v)
-            .with_shows_cursor(false)
-            .with_fps(60);
+        let config = stream_configuration(stream_width, stream_height, self.system_audio.is_some());
 
         let error_tx = self.permanent_error_tx.clone();
         let stop_tx = self.permanent_error_tx.clone();
@@ -520,6 +578,18 @@ impl Stream {
 
         let mut sc_stream = SCStream::new_with_delegate(&filter, &config, delegate);
         sc_stream.add_output_handler(handler, SCStreamOutputType::Screen);
+        if let Some(tap) = self.system_audio.clone() {
+            log::info!("start_capture: capturing system audio too");
+            let audio_handler = move |sample: CMSampleBuffer, of_type: SCStreamOutputType| {
+                if !matches!(of_type, SCStreamOutputType::Audio) || !tap.is_enabled() {
+                    return;
+                }
+                if let Some(samples) = system_audio_samples(&sample) {
+                    tap.send(samples);
+                }
+            };
+            sc_stream.add_output_handler(audio_handler, SCStreamOutputType::Audio);
+        }
 
         sc_stream.start_capture().map_err(|e| {
             log::error!("start_capture: SCK start_capture failed: {e}");
@@ -534,12 +604,7 @@ impl Stream {
         let Some(stream) = self.sc_stream.as_ref() else {
             return;
         };
-        let config = SCStreamConfiguration::new()
-            .with_width(width)
-            .with_height(height)
-            .with_pixel_format(PixelFormat::YCbCr_420v)
-            .with_shows_cursor(false)
-            .with_fps(60);
+        let config = stream_configuration(width, height, self.system_audio.is_some());
         if let Err(error) = stream.update_configuration(&config) {
             log::error!("capture stream reconfiguration failed: {error}");
         }
@@ -592,6 +657,7 @@ impl Stream {
             scale: self.scale,
             target_process_id: self.target_process_id,
             app_veil_state: self.app_veil_state.clone(),
+            system_audio: self.system_audio.clone(),
         })
     }
 

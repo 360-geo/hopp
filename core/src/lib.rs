@@ -1,11 +1,13 @@
 pub mod audio {
     pub mod auto_volume;
     pub mod capturer;
+    pub mod core_audio;
     pub mod device_monitor;
     pub mod input_volume;
     pub mod mixer;
     pub mod player;
     pub mod processing;
+    pub mod system_audio;
 }
 
 pub mod livekit {
@@ -415,6 +417,10 @@ pub struct Application<'a> {
     noise_cancellation_enabled: Arc<AtomicBool>,
     /// Turning the camera on first shows a private preview (Settings > Webcam).
     webcam_preview_enabled: bool,
+    /// Share the system audio with viewers when using headphones (Settings > Screen Share).
+    share_system_audio: bool,
+    /// Whether screen capture sends system audio to viewers right now.
+    system_audio_enabled: Arc<AtomicBool>,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     screensharing_active: bool,
     context_manager: Option<ContextManager>,
@@ -509,6 +515,8 @@ impl<'a> Application<'a> {
             audio_player,
             noise_cancellation_enabled: Arc::new(AtomicBool::new(true)),
             webcam_preview_enabled: true,
+            share_system_audio: false,
+            system_audio_enabled: Arc::new(AtomicBool::new(false)),
             camera_capturer: camera_capturer.clone(),
             screensharing_active: false,
             context_manager: None,
@@ -781,6 +789,14 @@ impl<'a> Application<'a> {
         }
 
         let app_veil_enabled = is_display_share && screen_capturer.app_veil_enabled();
+        let system_audio_tap = if self.share_system_audio {
+            room_service.system_audio_sender().map(|samples| {
+                audio::system_audio::SystemAudioTap::new(samples, self.system_audio_enabled.clone())
+            })
+        } else {
+            None
+        };
+        screen_capturer.set_system_audio_tap(system_audio_tap);
         let res = screen_capturer.start_capture(
             screenshare_input.content,
             Extent {
@@ -810,6 +826,7 @@ impl<'a> Application<'a> {
 
         room_service.unmute_screen_share_track();
         log::info!("screenshare: screen share track unmuted");
+        self.update_system_audio_sharing();
 
         let capture_frame = screen_capturer.frame();
         let target_process_id = screen_capturer.target_process_id();
@@ -869,6 +886,31 @@ impl<'a> Application<'a> {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = show;
+    }
+
+    /// Sends the system audio to viewers only while the user shares their
+    /// screen, has it on in Settings, and plays sound on headphones: through
+    /// speakers the microphone would pick it up too. Captured system audio
+    /// is dropped otherwise.
+    fn update_system_audio_sharing(&self) {
+        let Some(room_service) = self.room_service.as_ref() else {
+            self.system_audio_enabled.store(false, Ordering::Relaxed);
+            return;
+        };
+        let sharing = room_service
+            .participants()
+            .read()
+            .unwrap()
+            .get("local")
+            .is_some_and(|info| info.is_screensharing());
+        let share = self.share_system_audio
+            && sharing
+            && audio::core_audio::output_is_headphones(self.audio_player.output_device());
+        let was_shared = self.system_audio_enabled.swap(share, Ordering::Relaxed);
+        if share != was_shared {
+            log::info!("System audio sharing: {share}");
+        }
+        room_service.set_system_audio_unmuted(share);
     }
 
     fn stop_camera(&mut self) {
@@ -1080,6 +1122,7 @@ impl<'a> Application<'a> {
         if let Some(room_service) = self.room_service.as_ref() {
             room_service.mute_screen_share_track();
         }
+        self.update_system_audio_sharing();
         self.destroy_overlay_window();
         self.set_screensharing_active(false);
         self.close_drawing_window();
@@ -2594,6 +2637,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DefaultOutputDeviceChanged => {
                 self.audio_player.handle_default_output_changed();
+                self.update_system_audio_sharing();
             }
             UserEvent::ListAudioOutputs => {
                 let outputs = audio::mixer::list_audio_outputs();
@@ -2603,6 +2647,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::SetAudioOutput(output_device) => {
                 self.audio_player.set_output_device(output_device);
+                self.update_system_audio_sharing();
+            }
+            UserEvent::SetShareSystemAudio(enabled) => {
+                log::info!("user_event: SetShareSystemAudio({enabled})");
+                self.share_system_audio = enabled;
+                self.update_system_audio_sharing();
             }
             UserEvent::SetAutoMicVolume(enabled) => {
                 log::info!("user_event: SetAutoMicVolume({enabled})");
@@ -3417,6 +3467,7 @@ pub enum UserEvent {
     SetAudioOutput(Option<String>),
     SetAutoMicVolume(bool),
     SetWebcamPreview(bool),
+    SetShareSystemAudio(bool),
     /// Share the camera after its private preview.
     CameraPreviewShare,
     /// A viewer sent the sharer a link to open.
@@ -3554,6 +3605,9 @@ impl RenderEventLoop {
                     }
                     Message::SetAutoMicVolume(enabled) => UserEvent::SetAutoMicVolume(enabled),
                     Message::SetWebcamPreview(enabled) => UserEvent::SetWebcamPreview(enabled),
+                    Message::SetShareSystemAudio(enabled) => {
+                        UserEvent::SetShareSystemAudio(enabled)
+                    }
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture {
                         msg,
                         from_socket: true,

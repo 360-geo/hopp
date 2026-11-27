@@ -13,7 +13,7 @@ use thread_priority::{set_current_thread_priority, ThreadPriority};
 use tokio::runtime::Handle as TokioHandle;
 
 use crate::audio::mixer::SharedProcessor;
-use crate::livekit::audio::AudioPublisher;
+use crate::livekit::audio::{AudioPublisher, AudioTrackHandle, SystemAudioPublisher};
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::{process_video_stream, VideoBufferManager};
 
@@ -236,6 +236,8 @@ struct RemoteScreenShare {
     stop_tx: Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<()>>>>,
     publisher_identity: Arc<std::sync::Mutex<Option<String>>>,
     app_veil_snapshot: Arc<std::sync::Mutex<Option<(String, AppVeilSnapshot)>>>,
+    /// Playback of the sharer's system audio, apart from their microphone.
+    system_audio: Arc<std::sync::Mutex<Option<AudioTrackHandle>>>,
 }
 
 /*
@@ -251,6 +253,8 @@ pub(crate) struct RoomServiceInner {
     camera_buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     camera_track: std::sync::Mutex<Option<LocalVideoTrack>>,
     screen_share_track: std::sync::Mutex<Option<LocalVideoTrack>>,
+    /// The local system audio track, published muted with the screen share.
+    system_audio: std::sync::Mutex<Option<SystemAudioPublisher>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     remote_screen_share: RemoteScreenShare,
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
@@ -291,6 +295,10 @@ impl RoomServiceInner {
         }
         {
             self.screen_share_track.lock().unwrap().take();
+        }
+        {
+            self.system_audio.lock().unwrap().take();
+            self.remote_screen_share.system_audio.lock().unwrap().take();
         }
         {
             let mut stop_tx_guard = self.remote_screen_share.stop_tx.lock().unwrap();
@@ -411,12 +419,14 @@ impl RoomService {
             camera_buffer_source: std::sync::Mutex::new(None),
             camera_track: std::sync::Mutex::new(None),
             screen_share_track: std::sync::Mutex::new(None),
+            system_audio: std::sync::Mutex::new(None),
             participants,
             remote_screen_share: RemoteScreenShare {
                 buffer: Arc::new(std::sync::Mutex::new(None)),
                 stop_tx: Arc::new(std::sync::Mutex::new(None)),
                 publisher_identity: Arc::new(std::sync::Mutex::new(None)),
                 app_veil_snapshot: Arc::new(std::sync::Mutex::new(None)),
+                system_audio: Arc::new(std::sync::Mutex::new(None)),
             },
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
             video_health_summary: std::sync::Mutex::new(Default::default()),
@@ -714,6 +724,23 @@ impl RoomService {
             .send(RoomServiceCommand::MuteScreenShareTrack)
         {
             log::error!("mute_screen_share_track: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Where screen capture sends system audio, once the track is published.
+    pub fn system_audio_sender(&self) -> Option<mpsc::UnboundedSender<Vec<i16>>> {
+        self.inner
+            .system_audio
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(SystemAudioPublisher::sender)
+    }
+
+    /// Sends system audio to viewers, or stops it (the track stays published, muted).
+    pub fn set_system_audio_unmuted(&self, unmuted: bool) {
+        if let Some(publisher) = self.inner.system_audio.lock().unwrap().as_ref() {
+            publisher.set_unmuted(unmuted);
         }
     }
 
@@ -1126,6 +1153,12 @@ async fn room_service_commands(
                         *inner_clone_video.buffer_source.lock().unwrap() = Some(screen_source);
                         *inner_clone_video.screen_share_track.lock().unwrap() = Some(screen_track);
                     }
+                    match SystemAudioPublisher::publish(&video_room).await {
+                        Ok(publisher) => {
+                            *inner_clone_video.system_audio.lock().unwrap() = Some(publisher);
+                        }
+                        Err(e) => log::error!("room_service_commands: {e}"),
+                    }
 
                     Ok::<_, String>((video_room, video_rx))
                 });
@@ -1317,6 +1350,7 @@ async fn room_service_commands(
                         stop_tx: inner.remote_screen_share.stop_tx.clone(),
                         publisher_identity: inner.remote_screen_share.publisher_identity.clone(),
                         app_veil_snapshot: inner.remote_screen_share.app_veil_snapshot.clone(),
+                        system_audio: inner.remote_screen_share.system_audio.clone(),
                     },
                     connection_quality: inner.connection_quality.clone(),
                     audio_handle: audio_handle.clone(),
@@ -1355,6 +1389,13 @@ async fn room_service_commands(
                     let inner_video_room = inner.video_room.lock().await;
                     if let Some(room) = inner_video_room.as_ref() {
                         let _ = room.local_participant().unpublish_track(&track.sid()).await;
+                    }
+                }
+                let system_audio = inner.system_audio.lock().unwrap().take();
+                if let Some(publisher) = system_audio {
+                    let inner_video_room = inner.video_room.lock().await;
+                    if let Some(room) = inner_video_room.as_ref() {
+                        publisher.unpublish(room).await;
                     }
                 }
 
@@ -2874,6 +2915,21 @@ async fn handle_room_events(ctx: RoomEventContext) {
                     );
                 }
                 match track {
+                    livekit::track::RemoteTrack::Audio(audio_track)
+                        if publication.source() == TrackSource::ScreenshareAudio =>
+                    {
+                        log::info!(
+                            "handle_room_events: Playing the system audio {} shares",
+                            participant_identity
+                        );
+                        let handle = crate::livekit::audio::play_remote_audio_track(
+                            audio_track,
+                            mixer.clone(),
+                            &participant_identity,
+                            &audio_handle,
+                        );
+                        *remote_screen_share.system_audio.lock().unwrap() = Some(handle);
+                    }
                     livekit::track::RemoteTrack::Audio(audio_track) => {
                         log::info!(
                             "handle_room_events: Setting up audio stream for participant: {}",
@@ -3046,6 +3102,15 @@ async fn handle_room_events(ctx: RoomEventContext) {
                                 );
                             }
                         }
+                    }
+                    livekit::track::RemoteTrack::Audio(_)
+                        if publication.source() == TrackSource::ScreenshareAudio =>
+                    {
+                        log::info!(
+                            "handle_room_events: Stopping the system audio from {}",
+                            participant_identity
+                        );
+                        remote_screen_share.system_audio.lock().unwrap().take();
                     }
                     livekit::track::RemoteTrack::Audio(_) => {
                         log::info!(

@@ -230,11 +230,121 @@ impl SentLevel {
     }
 }
 
+const SYSTEM_AUDIO_TRACK_NAME: &str = "screen_share_audio";
+/// System audio is often music or video sound, so it gets more bits than speech.
+const SYSTEM_AUDIO_MAX_BITRATE: u64 = 96_000;
+/// Samples per 10 ms frame at the LiveKit rate.
+const FRAME_SAMPLES: usize = (LIVEKIT_SAMPLE_RATE / 100) as usize;
+/// System audio waiting to be sent beyond this (200 ms) is dropped, to bound delay.
+const SYSTEM_AUDIO_MAX_BUFFERED: usize = FRAME_SAMPLES * 20;
+
+/// The sharer's system audio track: published muted with the screen share,
+/// unmuted while system audio is shared. See `crate::audio::system_audio`.
+pub struct SystemAudioPublisher {
+    track: LocalAudioTrack,
+    samples: mpsc::UnboundedSender<Vec<i16>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl std::fmt::Debug for SystemAudioPublisher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SystemAudioPublisher")
+            .finish_non_exhaustive()
+    }
+}
+
+impl SystemAudioPublisher {
+    pub(crate) async fn publish(room: &Room) -> Result<Self, String> {
+        let source = NativeAudioSource::new(
+            AudioSourceOptions {
+                echo_cancellation: false,
+                noise_suppression: false,
+                auto_gain_control: false,
+            },
+            LIVEKIT_SAMPLE_RATE,
+            AUDIO_NUM_CHANNELS,
+            AUDIO_QUEUE_SIZE,
+        );
+        let track = LocalAudioTrack::create_audio_track(
+            SYSTEM_AUDIO_TRACK_NAME,
+            RtcAudioSource::Native(source.clone()),
+        );
+        track.mute();
+        room.local_participant()
+            .publish_track(
+                LocalTrack::Audio(track.clone()),
+                TrackPublishOptions {
+                    source: TrackSource::ScreenshareAudio,
+                    audio_encoding: Some(AudioEncoding {
+                        max_bitrate: SYSTEM_AUDIO_MAX_BITRATE,
+                    }),
+                    dtx: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| format!("Failed to publish the system audio track: {e}"))?;
+
+        let (samples, mut samples_rx) = mpsc::unbounded_channel::<Vec<i16>>();
+        let task = tokio::spawn(async move {
+            let mut pending: Vec<i16> = Vec::new();
+            while let Some(samples) = samples_rx.recv().await {
+                pending.extend_from_slice(&samples);
+                if pending.len() > SYSTEM_AUDIO_MAX_BUFFERED {
+                    let excess = pending.len() - SYSTEM_AUDIO_MAX_BUFFERED;
+                    pending.drain(..excess);
+                }
+                let whole_frames = pending.len() / FRAME_SAMPLES * FRAME_SAMPLES;
+                for frame in pending[..whole_frames].chunks_exact(FRAME_SAMPLES) {
+                    capture_frame(&source, frame, FRAME_SAMPLES, LIVEKIT_SAMPLE_RATE).await;
+                }
+                pending.drain(..whole_frames);
+            }
+        });
+        log::info!("SystemAudioPublisher: system audio track published (muted)");
+        Ok(Self {
+            track,
+            samples,
+            task,
+        })
+    }
+
+    /// Where screen capture sends system audio (48 kHz mono).
+    pub fn sender(&self) -> mpsc::UnboundedSender<Vec<i16>> {
+        self.samples.clone()
+    }
+
+    pub fn set_unmuted(&self, unmuted: bool) {
+        if unmuted {
+            self.track.unmute();
+        } else {
+            self.track.mute();
+        }
+    }
+
+    pub async fn unpublish(self, room: &Room) {
+        self.task.abort();
+        if let Err(e) = room
+            .local_participant()
+            .unpublish_track(&self.track.sid())
+            .await
+        {
+            log::error!("SystemAudioPublisher::unpublish: {e:?}");
+        }
+    }
+}
+
 /// Handle for a remote audio track subscription.
 /// On drop, removes the source from the mixer and aborts the receive task.
 pub struct AudioTrackHandle {
     _source: AudioSource,
     task: tokio::task::JoinHandle<()>,
+}
+
+impl std::fmt::Debug for AudioTrackHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioTrackHandle").finish_non_exhaustive()
+    }
 }
 
 impl Drop for AudioTrackHandle {
